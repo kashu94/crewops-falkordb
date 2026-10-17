@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CrewOps Graph Console</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">&#9992;</span>
+      <div>
+        <h1>CrewOps</h1>
+        <p>crew control on a FalkorDB graph</p>
+      </div>
+    </div>
+    <div class="who">
+      <label for="user">Acting as</label>
+      <select id="user"></select>
+      <span id="roles" class="chips"></span>
+    </div>
+  </header>
+
+  <main class="grid">
+    <section class="pane" id="left">
+      <h2>Inbox</h2>
+      <div id="inbox" class="muted">Pick a team member.</div>
+
+      <h2>Report a disruption</h2>
+      <form id="report-form" class="form">
+        <select id="kind">
+          <option value="crew_unavailable">Crew unavailable</option>
+          <option value="certification_lapse">Certification lapse</option>
+          <option value="flight_delay">Flight delay</option>
+          <option value="station_closure">Station closure</option>
+          <option value="gate_closure">Gate closure</option>
+        </select>
+        <div id="fields"></div>
+        <button type="submit">Report</button>
+        <p id="report-msg" class="muted small"></p>
+      </form>
+
+      <h2>Disruptions <button id="refresh" class="link" type="button">refresh</button></h2>
+      <ul id="disruptions" class="list"></ul>
+
+      <h2>Network insights</h2>
+      <div id="insights" class="small muted"></div>
+    </section>
+
+    <section class="pane" id="center">
+      <div id="detail" class="muted">Select a disruption.</div>
+      <div id="graph-wrap" hidden>
+        <h3>Subgraph</h3>
+        <div id="graph"></div>
+        <p class="small muted">Reporter, desk, empty seats, top options, plan and approver, read from FalkorDB.</p>
+      </div>
+    </section>
+
+    <section class="pane" id="right">
+      <h2>Assistant</h2>
+      <div id="chat" class="chat"></div>
+      <form id="ask-form" class="ask">
+        <input id="question" autocomplete="off" placeholder="Who covers C-1042 on 13 Oct?">
+        <button type="submit">Ask</button>
+      </form>
+      <div class="suggest" id="suggest"></div>
+      <h2>Memory</h2>
+      <div id="memory" class="small muted"></div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
