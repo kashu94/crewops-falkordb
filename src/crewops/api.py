@@ -68,7 +68,7 @@ _assistants: dict[tuple[str, str], Assistant] = {}
 
 def signed_in(request: Request) -> str | None:
     """The user picked in the console. Sent as a header too, because browsers block the
-    cookie when the console runs inside an iframe (as on Hugging Face Spaces)."""
+    cookie when the console is embedded in another site."""
     return request.headers.get("x-crewops-user") or request.cookies.get(COOKIE)
 
 

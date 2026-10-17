@@ -229,21 +229,25 @@ A controller gets `submit_plan` but not `approve_plan`; an approver gets the opp
 
 ## Deployment
 
-The live demo runs on Hugging Face Spaces as one container with FalkorDB and the app
-(`deploy/huggingface/`). FalkorDB keeps data in memory only; the seed is loaded again on
-every start. Steps:
+The live demo runs on Render's free plan as one container with FalkorDB and the app
+([deploy/Dockerfile](deploy/Dockerfile)). FalkorDB keeps data in memory only, and the seed
+is loaded again on every start.
 
-1. Create a new Space at https://huggingface.co/new-space, choose **Docker** and **Blank**,
-   hardware **CPU basic (free)**, visibility **Public**.
-2. Upload `deploy/huggingface/Dockerfile` and `deploy/huggingface/README.md` to the Space
-   (Files > Add file > Upload files). The Dockerfile downloads this repository from GitHub
-   when it builds.
-3. Wait for the build to finish (a few minutes), then open the Space.
+1. Sign in at https://dashboard.render.com with GitHub.
+2. New > Web Service > choose the `crewops-falkordb` repository.
+3. Language: Docker. Branch: `main`. Dockerfile Path: `./deploy/Dockerfile`.
+   Docker Build Context Directory: `.` (the repository root).
+4. Instance type: Free. Create the service and wait for the first deploy.
 
-To pick up new commits, use **Settings > Factory rebuild** in the Space.
+Free services sleep after 15 minutes without traffic; the next visit wakes them in about a
+minute. New commits on `main` deploy automatically.
 
-Another option is FalkorDB Cloud plus any container host running the root `Dockerfile` with
-`FALKORDB_HOST`, `FALKORDB_PORT`, `FALKORDB_USERNAME` and `FALKORDB_PASSWORD` set.
+To run the same container locally:
+
+```bash
+docker build -f deploy/Dockerfile -t crewops-allinone .
+docker run --rm -p 8000:8000 crewops-allinone      # http://localhost:8000
+```
 
 ## Tests
 
@@ -284,7 +288,7 @@ src/crewops/
   api.py, web/      console
   cli.py            CLI
 data/               seed data, demo team, scenarios
-deploy/huggingface/ Hugging Face Space files
+deploy/             single-container image (FalkorDB + app) for hosting
 docs/               Cypher catalog, demo script
 tests/              tests
 ```
