@@ -35,8 +35,7 @@ def _normalise(kind: str, ref: str) -> str:
 
 
 def extract_entities(*texts: str) -> list[dict[str, str]]:
-    """Ids named in a question or answer, in order of first mention (question first), so
-    the last one is the most recent thing said."""
+    """Ids found in the given texts, in the order they first appear."""
     seen: dict[tuple[str, str], None] = {}
     for text in texts:
         if not text:

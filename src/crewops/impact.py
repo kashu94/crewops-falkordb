@@ -209,9 +209,8 @@ class DelayEffect:
 
 
 def _ripple(rotation: list[dict[str, Any]], delay_s: int) -> dict[str, int]:
-    """Delay in seconds each leg inherits. The rest of the day's legs carry it in full (the
-    published turns are the minimum); an overnight absorbs whatever slack it has beyond the
-    minimum turn."""
+    """Delay (seconds) for each leg. Legs on the same day get the full delay; an overnight
+    gap can absorb some of it."""
     delays: dict[str, int] = {}
     prev_arr = None
     carried = delay_s
@@ -314,8 +313,8 @@ class ClosureImpact:
 
 
 def station_closure(graph: Graph, station: str, start_ts: int, end_ts: int) -> list[ClosureImpact]:
-    """Flights leaving or landing at a closed station, the least delay each needs, and what
-    that delay does to its crew's duty day."""
+    """Flights departing or arriving during the closure, the delay each needs, and the
+    effect on the crew duty day."""
     rows = run(
         graph,
         "station_closure",
@@ -359,8 +358,8 @@ class GateMove:
 def gate_closure(
     graph: Graph, gate: str, start_ts: int, end_ts: int, closed: list[str] | None = None
 ) -> list[GateMove]:
-    """Flights holding a closed gate, each with the gates free for its whole boarding window:
-    ordinary gates first, then the station's emergency gates."""
+    """Flights using the closed gate, with free gates at the same station (normal gates
+    first, then emergency gates)."""
     rows = run(
         graph,
         "gate_closure",

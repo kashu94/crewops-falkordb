@@ -155,8 +155,7 @@ def _fingerprint(
     submitter: str,
     submitted_ts: int,
 ) -> str:
-    """SHA-256 over exactly what decides the plan, including the roster and flight state it
-    was made against, read from the graph."""
+    """SHA-256 of the plan contents plus the current roster and flight state."""
     pairings = sorted({a["pairing"] for a in assignments})
     flights = sorted(set(cancel) | {m["flight"] for m in moves})
     roster = run(graph, "roster_state", ROSTER_STATE_QUERY, {"pairings": pairings}, read_only=True) if pairings else []

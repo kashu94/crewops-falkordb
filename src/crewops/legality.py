@@ -262,8 +262,7 @@ class Context:
         return out
 
     def positioning(self, origin: str, day: DutyDay) -> Positioning | None:
-        """The same-day flight from their base that delays the day least. None means they
-        cannot get there that day, which fails the base rule."""
+        """Best same-day positioning flight from the crew base, or None if there is none."""
         key = (origin, day.dep_station, day.date)
         if key not in self._positioning:
             self._positioning[key] = run(
@@ -283,8 +282,7 @@ class Context:
 
 
 def _intra_pairing_rest(days: list[DutyDay], book: RuleBook) -> list[RuleVerdict]:
-    """Rest between consecutive days of one pairing; only a delay or positioning slip can
-    break it, by eating into the overnight."""
+    """Rest between days of the same pairing (can break after a delay or positioning slip)."""
     out = []
     for prev, nxt in zip(days, days[1:], strict=False):
         rest = hours(prev.release_ts, nxt.report_ts)

@@ -45,8 +45,7 @@ class Answer:
     session_id: str = ""
     turn: int = 0
     focus: list[dict[str, str]] = field(default_factory=list)
-    """What the answer is about (the recommended crew member, say), recorded last so a
-    follow-up's "she" or "it" resolves to it."""
+    """Main ids of the answer. Saved last so follow-ups ("she", "it") point to them."""
 
     @property
     def evidence(self) -> list[dict[str, Any]]:

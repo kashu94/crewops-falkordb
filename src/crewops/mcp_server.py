@@ -1,8 +1,7 @@
 """MCP server exposing the tool registry, acting as one team member.
 
 uv run python -m crewops.mcp_server --user ananya.iyer
-uv run python -m crewops.mcp_server --user meera.bhatt --http --port 8765
-claude mcp add crewops -- uv run --directory <repo> python -m crewops.mcp_server --user ananya.iyer"""
+uv run python -m crewops.mcp_server --user meera.bhatt --http --port 8765"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""``crewops``: one command for every part of the system.
+"""CrewOps command line.
 
 crewops load --replace                         load the seed operation
 crewops report crew_unavailable --as imran.sheikh --details '{"crew_id": "C-1042", "from_date": "2026-10-13", "to_date": "2026-10-14"}'
@@ -8,7 +8,7 @@ crewops ask --as ananya.iyer                   interactive, one session
 crewops plan submit D-0001 --as ananya.iyer
 crewops plan approve PL-0001 --as meera.bhatt
 crewops explain D-0001
-crewops demo                                   the whole story, end to end
+crewops demo                                   run the full demo
 crewops mcp --user ananya.iyer                 MCP server on stdio
 crewops serve                                  web console on :8000
 """
@@ -101,7 +101,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
 
 def cmd_demo(args: argparse.Namespace) -> None:
-    """The whole story on a fresh graph: report, triage, ask, plan, approve, explain, remember."""
+    """Full demo on a fresh graph."""
     from crewops.agents.assistant import Assistant
     from crewops.agents.triage import NotifierAgent, TriageAgent
     from crewops.disruptions import report

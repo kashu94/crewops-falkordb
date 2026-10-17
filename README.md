@@ -54,7 +54,7 @@ There is no other database in the project. Everything above is a graph query:
 ## Architecture
 
 ```
-  Web console          CLI            MCP host (Claude Code, etc.)
+  Web console          CLI            MCP client
        \                |                 /
         v               v                v
   +-----------------------------------------------+
@@ -221,23 +221,34 @@ The console's user picker is for the demo only and is not authentication.
 ### MCP
 
 ```bash
-claude mcp add crewops -- uv run --directory "$PWD" python -m crewops.mcp_server --user ananya.iyer
-uv run crewops mcp --user meera.bhatt --http --port 8765
+uv run python -m crewops.mcp_server --user ananya.iyer             # stdio, for MCP clients
+uv run crewops mcp --user meera.bhatt --http --port 8765           # streamable HTTP
 ```
 
 A controller gets `submit_plan` but not `approve_plan`; an approver gets the opposite.
 
 ## Deployment
 
-1. Create a FalkorDB Cloud instance and note the host, port, username and password.
-2. Deploy the `Dockerfile` to a container host (Render, Railway, Fly.io or a VM) with
-   `FALKORDB_HOST`, `FALKORDB_PORT`, `FALKORDB_USERNAME`, `FALKORDB_PASSWORD` and optionally
-   `ANTHROPIC_API_KEY`. The app listens on port 8000 and loads the seed on first start.
+The live demo runs on Hugging Face Spaces as one container with FalkorDB and the app
+(`deploy/huggingface/`). FalkorDB keeps data in memory only; the seed is loaded again on
+every start. Steps:
+
+1. Create a new Space at https://huggingface.co/new-space, choose **Docker** and **Blank**,
+   hardware **CPU basic (free)**, visibility **Public**.
+2. Upload `deploy/huggingface/Dockerfile` and `deploy/huggingface/README.md` to the Space
+   (Files > Add file > Upload files). The Dockerfile downloads this repository from GitHub
+   when it builds.
+3. Wait for the build to finish (a few minutes), then open the Space.
+
+To pick up new commits, use **Settings > Factory rebuild** in the Space.
+
+Another option is FalkorDB Cloud plus any container host running the root `Dockerfile` with
+`FALKORDB_HOST`, `FALKORDB_PORT`, `FALKORDB_USERNAME` and `FALKORDB_PASSWORD` set.
 
 ## Tests
 
 ```bash
-uv run pytest       # 76 tests, needs FalkorDB running
+uv run pytest       # 77 tests, needs FalkorDB running
 uv run ruff check .
 ```
 
@@ -273,13 +284,10 @@ src/crewops/
   api.py, web/      console
   cli.py            CLI
 data/               seed data, demo team, scenarios
+deploy/huggingface/ Hugging Face Space files
 docs/               Cypher catalog, demo script
 tests/              tests
 ```
-
-## AI tools
-
-Claude Code was used as a coding assistant during development.
 
 ## License
 

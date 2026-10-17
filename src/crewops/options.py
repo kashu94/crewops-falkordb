@@ -61,7 +61,7 @@ FUNNEL = (
     ("rested", (REST,), "rest conflict or already rostered"),
     ("within limits", (FDP, DUTY, FLIGHT), "would breach a duty or flight-hour limit"),
 )
-"""The order a controller thinks in. A candidate drops out at the first stage they fail."""
+"""Check order. A candidate is counted at the first stage they fail."""
 
 
 # --- Cypher ---------------------------------------------------------------------------------
@@ -115,7 +115,7 @@ class Option:
     seniority: int | None = None
     risk_score: float | None = None
     resilience: float | None = None
-    """0-100: how much of today's reserve cover for this rank and base survives the choice."""
+    """0-100: share of today's reserves (same rank and base) left after this choice."""
     experience_years: int | None = None
 
     @property

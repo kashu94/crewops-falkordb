@@ -4,13 +4,14 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const inr = (n) => (n == null ? "" : "INR " + Number(n).toLocaleString("en-IN"));
 
 let me = null;
+let username = null;
 let current = null;
 let sessionId = null;
 let network = null;
 
 async function api(path, options = {}) {
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(username ? { "X-CrewOps-User": username } : {}) },
     credentials: "same-origin",
     ...options,
     body: options.body ? JSON.stringify(options.body) : undefined,
@@ -60,10 +61,11 @@ async function loadTeam() {
 function localStorageGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function localStorageSet(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }
 
-async function signIn(username) {
-  if (!username) return;
-  await api("/api/login", { method: "POST", body: { username } });
-  localStorageSet("crewops.user", username);
+async function signIn(name) {
+  if (!name) return;
+  await api("/api/login", { method: "POST", body: { username: name } });
+  username = name;
+  localStorageSet("crewops.user", name);
   sessionId = null;
   $("#chat").innerHTML = "";
   await refreshAll();

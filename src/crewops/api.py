@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Cookie, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -66,6 +66,12 @@ app.mount("/static", StaticFiles(directory=WEB), name="static")
 _assistants: dict[tuple[str, str], Assistant] = {}
 
 
+def signed_in(request: Request) -> str | None:
+    """The user picked in the console. Sent as a header too, because browsers block the
+    cookie when the console runs inside an iframe (as on Hugging Face Spaces)."""
+    return request.headers.get("x-crewops-user") or request.cookies.get(COOKIE)
+
+
 def _caller(username: str | None) -> Caller:
     if not username:
         raise HTTPException(401, "pick a team member first")
@@ -117,7 +123,7 @@ def login(body: Login, response: Response) -> dict[str, Any]:
 
 
 @app.get("/api/me")
-def me(crewops_user: str | None = Cookie(default=None)) -> dict[str, Any]:
+def me(crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     caller = _caller(crewops_user)
     gs = graphs()
     return {
@@ -142,7 +148,7 @@ ORDER BY id DESC LIMIT 50
 
 
 @app.get("/api/disruptions")
-def list_disruptions(crewops_user: str | None = Cookie(default=None)) -> list[dict[str, Any]]:
+def list_disruptions(crewops_user: str | None = Depends(signed_in)) -> list[dict[str, Any]]:
     _caller(crewops_user)
     rows = run(graphs().ops, "list_disruptions_web", LIST, read_only=True)
     for r in rows:
@@ -151,7 +157,7 @@ def list_disruptions(crewops_user: str | None = Cookie(default=None)) -> list[di
 
 
 @app.get("/api/disruptions/{disruption_id}")
-def disruption(disruption_id: str, crewops_user: str | None = Cookie(default=None)) -> dict[str, Any]:
+def disruption(disruption_id: str, crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     _caller(crewops_user)
     gs = graphs()
     d = _guard(disruptions.get, gs.ops, disruption_id)
@@ -160,14 +166,14 @@ def disruption(disruption_id: str, crewops_user: str | None = Cookie(default=Non
 
 
 @app.get("/api/disruptions/{disruption_id}/graph")
-def disruption_graph(disruption_id: str, crewops_user: str | None = Cookie(default=None)) -> dict[str, Any]:
+def disruption_graph(disruption_id: str, crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     _caller(crewops_user)
     return explain.subgraph(graphs().ops, disruption_id)
 
 
 @app.get("/api/disruptions/{disruption_id}/why-not/{crew_id}")
 def disruption_why_not(
-    disruption_id: str, crew_id: str, crewops_user: str | None = Cookie(default=None)
+    disruption_id: str, crew_id: str, crewops_user: str | None = Depends(signed_in)
 ) -> dict[str, Any]:
     _caller(crewops_user)
     return explain.why_not(graphs().ops, disruption_id, crew_id)
@@ -179,13 +185,13 @@ class NewReport(BaseModel):
 
 
 @app.post("/api/disruptions")
-def new_report(body: NewReport, crewops_user: str | None = Cookie(default=None)) -> dict[str, Any]:
+def new_report(body: NewReport, crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     caller = _caller(crewops_user)
     return {"id": _guard(disruptions.report, graphs().ops, body.kind, body.details, caller.username)}
 
 
 @app.post("/api/triage")
-def triage_now(crewops_user: str | None = Cookie(default=None)) -> dict[str, Any]:
+def triage_now(crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     _caller(crewops_user)
     gs = graphs()
     handled = TriageAgent(gs.ops, "triage-manual").drain()
@@ -198,27 +204,27 @@ class PlanBody(BaseModel):
 
 
 @app.post("/api/disruptions/{disruption_id}/plan")
-def submit_plan(disruption_id: str, body: PlanBody, crewops_user: str | None = Cookie(default=None)) -> dict[str, Any]:
+def submit_plan(disruption_id: str, body: PlanBody, crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     caller = _caller(crewops_user)
     return _guard(plans.submit, graphs().ops, disruption_id, caller.username, note=body.note or "")
 
 
 @app.post("/api/disruptions/{disruption_id}/close")
 def close_disruption(
-    disruption_id: str, body: PlanBody, crewops_user: str | None = Cookie(default=None)
+    disruption_id: str, body: PlanBody, crewops_user: str | None = Depends(signed_in)
 ) -> dict[str, Any]:
     caller = _caller(crewops_user)
     return _guard(plans.close, graphs().ops, disruption_id, caller.username, body.note or "closed from the console")
 
 
 @app.post("/api/plans/{plan_id}/approve")
-def approve_plan(plan_id: str, crewops_user: str | None = Cookie(default=None)) -> dict[str, Any]:
+def approve_plan(plan_id: str, crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     caller = _caller(crewops_user)
     return _guard(plans.approve, graphs().ops, plan_id, caller.username)
 
 
 @app.post("/api/plans/{plan_id}/reject")
-def reject_plan(plan_id: str, body: PlanBody, crewops_user: str | None = Cookie(default=None)) -> dict[str, Any]:
+def reject_plan(plan_id: str, body: PlanBody, crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     caller = _caller(crewops_user)
     return _guard(plans.reject, graphs().ops, plan_id, caller.username, body.note or "rejected")
 
@@ -229,7 +235,7 @@ class Question(BaseModel):
 
 
 @app.post("/api/ask")
-def ask(body: Question, crewops_user: str | None = Cookie(default=None)) -> dict[str, Any]:
+def ask(body: Question, crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     caller = _caller(crewops_user)
     key = (caller.username, body.session_id or "")
     bot = _assistants.get(key)
@@ -240,7 +246,7 @@ def ask(body: Question, crewops_user: str | None = Cookie(default=None)) -> dict
 
 
 @app.get("/api/memory")
-def memory(crewops_user: str | None = Cookie(default=None)) -> dict[str, Any]:
+def memory(crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     caller = _caller(crewops_user)
     gs = graphs()
     m = Memory(gs, caller.username)
@@ -254,7 +260,7 @@ def memory(crewops_user: str | None = Cookie(default=None)) -> dict[str, Any]:
 
 
 @app.get("/api/insights")
-def insights(crewops_user: str | None = Cookie(default=None)) -> dict[str, Any]:
+def insights(crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     _caller(crewops_user)
     g = graphs().ops
     return {

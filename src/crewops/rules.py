@@ -200,8 +200,7 @@ def check_fdp(day: DutyDay, book: RuleBook) -> RuleVerdict:
 
 
 def _worst_window(crew, day, earlier, window_days, in_window, hours_of, exclude) -> tuple[float, str]:
-    """Largest total over every window the new duty can push over the limit: the one ending
-    on the duty date and each ending on a later rostered day inside the horizon."""
+    """Highest total over the windows ending on the duty date or on later rostered days."""
     new_days = [*earlier, day]
     horizon = add_days(day.date, window_days - 1)
     ends = {day.date} | {d for d in crew.rostered_dates(exclude) if day.date < d <= horizon}

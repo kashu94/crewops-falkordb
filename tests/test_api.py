@@ -59,3 +59,9 @@ def test_signed_out_and_bad_input(client):
     _as(client, "imran.sheikh")
     assert client.post("/api/disruptions", json={"kind": "volcano", "details": {}}).status_code == 400
     assert client.get("/api/disruptions/D-9999").status_code == 404
+
+
+def test_header_sign_in_works_without_cookies(client):
+    client.cookies.clear()
+    me = client.get("/api/me", headers={"X-CrewOps-User": "meera.bhatt"}).json()
+    assert me["username"] == "meera.bhatt" and "approver" in me["roles"]

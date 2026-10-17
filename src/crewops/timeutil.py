@@ -40,6 +40,6 @@ def hours(start: int | float, end: int | float) -> float:
 
 
 def format_hours(value: float) -> str:
-    """``1.33`` -> ``'1h20m'``, the way a breach is read out."""
+    """``1.33`` -> ``'1h20m'``."""
     minutes = round(abs(value) * 60)
     return f"{minutes // 60}h{minutes % 60:02d}m"
