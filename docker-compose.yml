@@ -1,0 +1,31 @@
+# FalkorDB alone:      docker compose up -d falkordb
+# Everything (app too): docker compose --profile app up -d --build
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    ports:
+      - "${FALKORDB_PORT:-6379}:6379"   # Redis protocol; set FALKORDB_PORT in .env if 6379 is taken
+      - "3000:3000"   # FalkorDB Browser: http://localhost:3000
+    volumes:
+      - falkordb-data:/var/lib/falkordb/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    profiles: ["app"]
+    depends_on:
+      falkordb:
+        condition: service_healthy
+    environment:
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports:
+      - "8000:8000"
+
+volumes:
+  falkordb-data:
