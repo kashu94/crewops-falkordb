@@ -455,16 +455,17 @@ def _analyse_crew(graph: Graph, d: dict[str, Any], ctx: Context) -> dict[str, An
     passengers = sum(g["passengers"] for g in gaps)
     if gaps:
         lines = [
-            f"{g['role']} seat on {g['pairing_id']} ({len(g['uncovered_flights'])} flights, "
-            f"{g['passengers']} passengers): "
+            f"{g['role']} on {g['pairing_id']} ({len(g['uncovered_flights'])} flights): "
             + (
-                f"recommend {g['recommended']['action']} for INR {g['recommended']['cost_inr']:,}"
+                f"{g['recommended']['name']} ({g['recommended']['crew_id']}), "
+                f"{g['recommended']['strategy'].replace('_', ' ')}, INR {g['recommended']['cost_inr']:,}."
                 if g["recommended"]
-                else "no legal crew; cancel or operate short"
+                else "no legal crew, cancel or operate short."
             )
             for g in gaps
         ]
-        headline = f"{len(gaps)} seat(s) to cover, {passengers} passengers. " + " ".join(lines)
+        seats = "1 seat" if len(gaps) == 1 else f"{len(gaps)} seats"
+        headline = f"{seats} to cover, {passengers} passengers affected. " + " ".join(lines)
     else:
         headline = "No rostered duty is affected in that period."
     return {

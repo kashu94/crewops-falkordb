@@ -3,73 +3,71 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CrewOps Graph Console</title>
+  <title>CrewOps Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Crect width=%2224%22 height=%2224%22 rx=%226%22 fill=%22%232a78d6%22/%3E%3Cpath d=%22M5 15l14-4-14-4 3 4-3 4z%22 fill=%22white%22/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/styles.css">
   <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
-  <header class="bar">
-    <div class="brand">
-      <span class="logo" aria-hidden="true">&#9992;</span>
-      <div>
+  <!-- Sign-in: pick a team member -->
+  <section id="landing" class="landing" hidden>
+    <div class="landing-inner">
+      <div class="landing-head">
+        <div class="logo-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M2 16l20-6-20-6 4 6-4 6zm4-6h8"/></svg>
+        </div>
         <h1>CrewOps</h1>
-        <p>crew control on a FalkorDB graph</p>
+        <p class="lead">Crew control for three airlines, running on a FalkorDB graph. Sign in as a team member to see their view.</p>
+        <p class="clock-line">Operation clock <span id="landing-clock">-</span></p>
       </div>
+      <div id="people" class="people"></div>
+      <p class="fine">Demo sign-in only. All people, airlines and flights are fictional.</p>
     </div>
-    <div class="who">
-      <label for="user">Acting as</label>
-      <select id="user"></select>
-      <span id="roles" class="chips"></span>
-    </div>
-  </header>
+  </section>
 
-  <main class="grid">
-    <section class="pane" id="left">
-      <h2>Inbox</h2>
-      <div id="inbox" class="muted">Pick a team member.</div>
-
-      <h2>Report a disruption</h2>
-      <form id="report-form" class="form">
-        <select id="kind">
-          <option value="crew_unavailable">Crew unavailable</option>
-          <option value="certification_lapse">Certification lapse</option>
-          <option value="flight_delay">Flight delay</option>
-          <option value="station_closure">Station closure</option>
-          <option value="gate_closure">Gate closure</option>
-        </select>
-        <div id="fields"></div>
-        <button type="submit">Report</button>
-        <p id="report-msg" class="muted small"></p>
-      </form>
-
-      <h2>Disruptions <button id="refresh" class="link" type="button">refresh</button></h2>
-      <ul id="disruptions" class="list"></ul>
-
-      <h2>Network insights</h2>
-      <div id="insights" class="small muted"></div>
-    </section>
-
-    <section class="pane" id="center">
-      <div id="detail" class="muted">Select a disruption.</div>
-      <div id="graph-wrap" hidden>
-        <h3>Subgraph</h3>
-        <div id="graph"></div>
-        <p class="small muted">Reporter, desk, empty seats, top options, plan and approver, read from FalkorDB.</p>
+  <!-- The app -->
+  <div id="app" class="shell" hidden>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo-mark small" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M2 16l20-6-20-6 4 6-4 6zm4-6h8"/></svg>
+        </div>
+        <div>
+          <div class="brand-name">CrewOps</div>
+          <div class="brand-sub">on FalkorDB</div>
+        </div>
       </div>
-    </section>
+      <nav id="nav" class="nav"></nav>
+      <div class="me-card">
+        <div id="me-avatar" class="avatar"></div>
+        <div class="me-text">
+          <div id="me-name" class="me-name"></div>
+          <div id="me-role" class="me-role"></div>
+        </div>
+        <button id="switch" class="icon-btn" type="button" title="Switch user" aria-label="Switch user">
+          <svg viewBox="0 0 24 24"><path d="M16 3l4 4-4 4M20 7H8M8 21l-4-4 4-4M4 17h12"/></svg>
+        </button>
+      </div>
+    </aside>
 
-    <section class="pane" id="right">
-      <h2>Assistant</h2>
-      <div id="chat" class="chat"></div>
-      <form id="ask-form" class="ask">
-        <input id="question" autocomplete="off" placeholder="Who covers C-1042 on 13 Oct?">
-        <button type="submit">Ask</button>
-      </form>
-      <div class="suggest" id="suggest"></div>
-      <h2>Memory</h2>
-      <div id="memory" class="small muted"></div>
-    </section>
-  </main>
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h2 id="page-title"></h2>
+          <p id="page-sub" class="muted"></p>
+        </div>
+        <div class="clock-chip" title="All times are UTC">
+          <span class="dot live"></span><span id="clock">-</span>
+        </div>
+      </header>
+      <div id="page" class="page"></div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
   <script src="/static/app.js"></script>
 </body>
 </html>

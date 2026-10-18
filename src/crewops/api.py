@@ -100,7 +100,14 @@ def index() -> FileResponse:
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     gs = graphs()
-    return {"falkordb": gs.ping(), "graph": gs.ops_name, "nodes": summarize(gs.ops)}
+    from crewops.legality import Context
+
+    return {
+        "falkordb": gs.ping(),
+        "graph": gs.ops_name,
+        "nodes": summarize(gs.ops),
+        "clock": iso(Context.open(gs.ops).now_ts),
+    }
 
 
 TEAM = "MATCH (u:User) OPTIONAL MATCH (u)-[:STAFFS]->(d:Desk) RETURN u.username AS username, u.name AS name, u.roles AS roles, d.id AS desk ORDER BY username"
@@ -268,3 +275,37 @@ def insights(crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
         "rule_pressure": explain.rule_pressure(g),
         "agents": coordinator.activity(g),
     }
+
+
+SUMMARY = """
+OPTIONAL MATCH (d:Disruption)
+WITH collect(d) AS all
+RETURN size(all) AS total,
+       size([x IN all WHERE x.status IN $open]) AS open,
+       size([x IN all WHERE x.status = 'OPTIONS_READY']) AS needs_plan,
+       size([x IN all WHERE x.status = 'PLAN_SUBMITTED']) AS awaiting_approval,
+       size([x IN all WHERE x.status IN ['RESOLVED', 'CLOSED']]) AS resolved
+"""
+
+PASSENGERS = """
+MATCH (d:Disruption)-[:HAS_GAP]->(g:Gap)
+WHERE d.status IN $open
+RETURN coalesce(sum(g.passengers), 0) AS passengers
+"""
+
+
+@app.get("/api/summary")
+def summary(crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
+    _caller(crewops_user)
+    g = graphs().ops
+    from crewops.legality import OPEN_STATUSES, Context
+
+    counts = run(g, "summary", SUMMARY, {"open": OPEN_STATUSES}, read_only=True)[0]
+    passengers = run(g, "open_passengers", PASSENGERS, {"open": OPEN_STATUSES}, read_only=True)[0]["passengers"]
+    return counts | {"passengers": passengers, "clock": iso(Context.open(g).now_ts)}
+
+
+@app.post("/api/tools/{name}")
+def call_tool(name: str, body: dict[str, Any], crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
+    caller = _caller(crewops_user)
+    return registry.call(graphs(), caller, name, body)
