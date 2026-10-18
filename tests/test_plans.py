@@ -153,3 +153,22 @@ def test_approved_hold_moves_the_trips_departures(fresh):
     approve(g, plan["plan_id"], "meera.bhatt")
     after = run(g, "dep", "MATCH (f:Flight {id: 'DX421-2026-10-17'}) RETURN f.dep_ts AS t, f.delay_minutes AS m")[0]
     assert after == {"t": before + 2 * 3600, "m": 120}
+
+
+def test_a_mistaken_report_can_be_withdrawn_until_it_changes_the_roster(fresh):
+    from crewops.legality import assess
+    from crewops.plans import withdraw
+
+    g = fresh.ops
+    d = report(g, "crew_unavailable", {"crew_id": "C-3310", "from_date": "2026-10-13"}, "imran.sheikh")
+    assert not assess(g, "C-3310", "P-2291").legal
+    with pytest.raises(NotAllowed):
+        withdraw(g, d, "lakshmi.hegde")  # another reporter
+    withdraw(g, d, "imran.sheikh")
+    assert run(g, "left", "MATCH (x:Disruption {id: $id}) RETURN count(x) AS n", {"id": d}) == [{"n": 0}]
+    assert assess(g, "C-3310", "P-2291").legal
+
+    d2 = _sick_captain(g)
+    approve(g, submit(g, d2, "ananya.iyer")["plan_id"], "meera.bhatt")
+    with pytest.raises(PlanError, match="cannot be withdrawn"):
+        withdraw(g, d2, "imran.sheikh")

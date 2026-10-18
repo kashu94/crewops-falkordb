@@ -34,14 +34,16 @@ def loaded(gs: Graphs) -> Graphs:
 
 
 @pytest.fixture
-def fresh(gs: Graphs) -> Graphs:
-    """A freshly loaded operation for tests that change it."""
+def fresh(gs: Graphs):
+    """A freshly loaded operation for tests that change it. Reloaded afterwards too, so tests
+    that share the session's loaded graph never see another test's changes."""
     from crewops.seed import load
 
     load(gs.ops, replace=True)
     for name in gs.memory_graphs():
         gs.db.select_graph(name).delete()
-    return gs
+    yield gs
+    load(gs.ops, replace=True)
 
 
 @pytest.fixture(scope="session")

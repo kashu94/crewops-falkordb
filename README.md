@@ -20,6 +20,11 @@ can show the Cypher queries it came from.
 - **Legal cover, ranked by cost.** All seven duty rules are checked (duty period, 7-day and
   28-day limits, rest, rating, certificates, base). Crew who fail are listed with the rule
   they break.
+- **Crew schedules.** Desk roles see every crew member's week across all three airlines (trips,
+  report and release times, reserve windows, unavailability) and each person's flights. Crew see
+  only their own schedule.
+- **Withdrawing a report.** A report made by mistake can be withdrawn by its reporter, a controller
+  or an admin, until an approved plan has changed the roster.
 - **Desk assignment.** Each analysed disruption goes to the controller desk with the fewest open
   disruptions (ties: fewest in total, then desk order), so work spreads evenly.
 - **Four-eyes approval.** A controller picks an option for each seat (any legal crew member,
@@ -265,7 +270,7 @@ docker run --rm -p 8000:8000 crewops-allinone      # http://localhost:8000
 ## Tests
 
 ```bash
-uv run pytest       # 88 tests, needs FalkorDB running
+uv run pytest       # 91 tests, needs FalkorDB running
 uv run ruff check .
 ```
 

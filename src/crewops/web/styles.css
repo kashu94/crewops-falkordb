@@ -339,3 +339,41 @@ tr.cancel-row td.pick input { accent-color: var(--critical); }
 tr.chosen td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .tag-chosen { font-size: 11px; font-weight: 600; color: var(--accent); margin-left: 6px; }
 tr.note-row td { background: none; }
+
+/* roster board */
+.rb-filters { flex-wrap: wrap; }
+.rb-right { display: flex; gap: 8px; flex-wrap: wrap; }
+.rb-right select, .rb-right input { width: auto; min-width: 150px; padding: 7px 10px; font-size: 13px; }
+.seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 2px; flex-wrap: wrap; }
+.seg button { border: 0; background: none; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 500; color: var(--ink-2); cursor: pointer; }
+.seg button.on { background: var(--surface); color: var(--accent); box-shadow: var(--shadow); font-weight: 600; }
+.rb-legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); color: var(--ink-2); }
+.rb-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.rb-legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.rb-wrap { overflow: auto; max-height: 68vh; }
+table.rb { border-collapse: separate; border-spacing: 0; min-width: 980px; }
+table.rb th { position: sticky; top: 0; z-index: 2; background: var(--surface); text-align: center; text-transform: none; letter-spacing: 0; font-size: 12px; color: var(--ink-2); }
+table.rb th.rb-today { color: var(--accent); }
+table.rb th.rb-past, table.rb td.rb-past { opacity: .55; }
+.rb-count { font-weight: 400; color: var(--muted); font-size: 11px; }
+table.rb .rb-name { position: sticky; left: 0; z-index: 1; background: var(--surface); text-align: left; min-width: 230px; border-right: 1px solid var(--line); }
+table.rb thead .rb-name { z-index: 3; }
+table.rb .rb-name i { display: inline-block; width: 4px; height: 14px; border-radius: 2px; margin-right: 8px; vertical-align: -2px; }
+table.rb tbody tr { cursor: pointer; }
+table.rb tbody tr:hover td { background: var(--surface-2); }
+table.rb td { padding: 6px; text-align: center; }
+td.rb-off { color: var(--line-strong); }
+td.rb-cell { min-width: 112px; }
+td.rb-cell b { display: block; font-size: 12px; }
+td.rb-cell span { display: block; font-size: 11px; color: var(--muted); white-space: nowrap; }
+td.rb-cell b, td.rb-cell span { padding: 0 6px; }
+td.rb-duty b, td.rb-duty span, td.rb-reserve b, td.rb-reserve span, td.rb-unavail b, td.rb-unavail span { border-left: 3px solid transparent; }
+td.rb-duty { background: linear-gradient(var(--accent-soft), var(--accent-soft)) padding-box; }
+td.rb-duty b, td.rb-duty span { border-color: var(--accent); }
+td.rb-reserve { background: color-mix(in srgb, var(--good) 10%, transparent); }
+td.rb-reserve b, td.rb-reserve span { border-color: var(--good); }
+td.rb-unavail { background: color-mix(in srgb, var(--critical) 10%, transparent); }
+td.rb-unavail b, td.rb-unavail span { border-color: var(--critical); }
+.rb-legend i.rb-duty { background: var(--accent); }
+.rb-legend i.rb-reserve { background: var(--good); }
+.rb-legend i.rb-unavail { background: var(--critical); }

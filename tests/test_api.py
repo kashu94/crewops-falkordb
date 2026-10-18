@@ -65,3 +65,17 @@ def test_header_sign_in_works_without_cookies(client):
     client.cookies.clear()
     me = client.get("/api/me", headers={"X-CrewOps-User": "meera.bhatt"}).json()
     assert me["username"] == "meera.bhatt" and "approver" in me["roles"]
+
+
+def test_roster_board_is_for_desk_roles_only(client):
+    board = client.get("/api/roster-board", headers={"X-CrewOps-User": "imran.sheikh"}).json()
+    assert len(board["crew"]) == 150
+    nair = next(c for c in board["crew"] if c["crew_id"] == "C-1042")
+    assert nair["days"]["2026-10-13"]["pairing"] == "P-2291"
+    assert client.get("/api/roster-board", headers={"X-CrewOps-User": "c1042.nair"}).status_code == 403
+
+
+def test_report_dates_start_at_the_first_day_with_flights_left(client):
+    options = client.get("/api/form-options", headers={"X-CrewOps-User": "imran.sheikh"}).json()
+    assert (options["first_date"], options["last_date"]) == ("2026-10-13", "2026-10-18")
+    assert all(f["date"] >= "2026-10-13" for f in options["flights"])

@@ -406,5 +406,39 @@ def close(graph: Graph, disruption_id: str, username: str, reason: str, now_ts: 
     return {"disruption": disruption_id, "status": "CLOSED"}
 
 
+WITHDRAW_DISRUPTION = """
+MATCH (d:Disruption {id: $id})
+OPTIONAL MATCH (d)-[:HAS_GAP]->(g:Gap)
+OPTIONAL MATCH (g)-[:RULED_OUT]->(x:Exclusion)
+OPTIONAL MATCH (d)-[:LOGGED]->(e:Event)
+OPTIONAL MATCH (pl:Plan)-[:FOR]->(d)
+OPTIONAL MATCH (pl)-[:HAS]->(asg:Assignment)
+OPTIONAL MATCH (h:Handoff)-[:ABOUT]->(d)
+WITH d, collect(DISTINCT g) + collect(DISTINCT x) + collect(DISTINCT e) + collect(DISTINCT pl)
+     + collect(DISTINCT asg) + collect(DISTINCT h) AS attached
+FOREACH (n IN attached | DETACH DELETE n)
+DETACH DELETE d
+RETURN count(*) AS removed
+"""
+
+COMMITTED_PLANS = "MATCH (pl:Plan {status: 'COMMITTED'})-[:FOR]->(:Disruption {id: $id}) RETURN count(pl) AS n"
+
+
+def withdraw(graph: Graph, disruption_id: str, username: str) -> dict[str, Any]:
+    """Remove a disruption reported by mistake, with its analysis, plans and log.
+
+    Allowed for the person who reported it, a controller or an admin, and only while no plan
+    for it has changed the roster (that change would have to be planned back instead)."""
+    who = user(graph, username)
+    d = get(graph, disruption_id)
+    roles = set(who["roles"])
+    if not (d["reporter"] == username or roles & {"controller", "admin", "super_admin"}):
+        raise NotAllowed("only the reporter, a controller or an admin can withdraw a report")
+    if run(graph, "committed_plans", COMMITTED_PLANS, {"id": disruption_id}, read_only=True)[0]["n"]:
+        raise PlanError(f"{disruption_id} already changed the roster through an approved plan; it cannot be withdrawn")
+    run(graph, "withdraw_disruption", WITHDRAW_DISRUPTION, {"id": disruption_id})
+    return {"disruption": disruption_id, "status": "WITHDRAWN"}
+
+
 def pending_for(graph: Graph, username: str) -> list[dict[str, Any]]:
     return run(graph, "pending_plans", PENDING_FOR_APPROVER, {"user": username}, read_only=True)

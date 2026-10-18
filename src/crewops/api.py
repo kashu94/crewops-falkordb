@@ -345,14 +345,18 @@ RETURN crew, flights, gates, collect({tail: a.tail, type: a.type, airline: al.co
 def form_options(crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     """Choices for the report form: crew, flights, gates, aircraft, stations and the week."""
     _caller(crewops_user)
+    from crewops.legality import Context
     from crewops.timeutil import hhmm
 
     g = graphs().ops
+    now = Context.open(g).now_ts
     row = run(g, "form_options", FORM_OPTIONS, read_only=True)[0]
+    stations = sorted({f["from"] for f in row["flights"]} | {f["to"] for f in row["flights"]})
+    # only flights that have not left yet can still be disrupted
+    row["flights"] = [f for f in row["flights"] if f["dep_ts"] >= now]
     for f in row["flights"]:
         f["departs"] = hhmm(f.pop("dep_ts"))
     dates = sorted({f["date"] for f in row["flights"]})
-    stations = sorted({f["from"] for f in row["flights"]} | {f["to"] for f in row["flights"]})
     return row | {"stations": stations, "first_date": dates[0], "last_date": dates[-1]}
 
 
@@ -378,3 +382,65 @@ def board(limit: int = 8) -> list[dict[str, Any]]:
     for r in rows:
         r["departs"] = hhmm(r.pop("dep_ts"))
     return rows
+
+
+ROSTER_BOARD = """
+MATCH (c:Crew)-[:EMPLOYED_BY]->(al:Airline), (c)-[:BASED_AT]->(b:Station)
+OPTIONAL MATCH (c)-[a:ASSIGNED]->(p:Pairing)-[:HAS_DAY]->(d:DutyDay)
+WITH c, al, b, collect(CASE WHEN d IS NULL THEN NULL ELSE
+     {date: d.date, pairing: p.id, role: a.role, report_ts: d.report_ts, release_ts: d.release_ts,
+      sectors: d.sectors, via_plan: a.via_plan} END) AS duties
+OPTIONAL MATCH (c)-[oc:ON_CALL]->(:Station)
+WITH c, al, b, duties, collect(CASE WHEN oc IS NULL THEN NULL ELSE
+     {date: oc.date, start_ts: oc.start_ts, end_ts: oc.end_ts} END) AS oncall
+OPTIONAL MATCH (dis:Disruption)-[gr:GROUNDS]->(c) WHERE dis.status IN $open
+RETURN c.id AS crew_id, c.name AS name, c.rank AS rank, c.status AS status, al.code AS airline,
+       al.name AS airline_name, al.color AS color, b.code AS base, duties, oncall,
+       collect(CASE WHEN dis IS NULL THEN NULL ELSE {date: gr.date, disruption: dis.id} END) AS grounded
+"""
+
+RANK_ORDER = {"Captain": 0, "First Officer": 1, "Senior Cabin Crew": 2, "Cabin Crew": 3}
+
+
+@app.get("/api/roster-board")
+def roster_board(crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
+    """Every crew member's week, day by day. Desk roles only: crew see just their own schedule."""
+    caller = _caller(crewops_user)
+    if not caller.roles & registry.DESK_ROLES:
+        raise HTTPException(403, "crew can only see their own schedule")
+    from crewops.legality import OPEN_STATUSES, Context
+    from crewops.timeutil import day_of, hhmm
+
+    g = graphs().ops
+    rows = run(g, "roster_board", ROSTER_BOARD, {"open": OPEN_STATUSES}, read_only=True)
+    dates: set[str] = set()
+    for r in rows:
+        r["days"] = {}
+        for d in r.pop("duties"):
+            if d:
+                dates.add(d["date"])
+                r["days"][d["date"]] = {
+                    "kind": "duty",
+                    "pairing": d["pairing"],
+                    "role": d["role"],
+                    "report": hhmm(d["report_ts"]),
+                    "release": hhmm(d["release_ts"]),
+                    "sectors": d["sectors"],
+                    "via_plan": d["via_plan"],
+                }
+        for o in r.pop("oncall"):
+            if o and o["date"] not in r["days"]:
+                dates.add(o["date"])
+                r["days"][o["date"]] = {"kind": "reserve", "window": f"{hhmm(o['start_ts'])}-{hhmm(o['end_ts'])}"}
+        for gr in r.pop("grounded"):
+            if gr:
+                cell = r["days"].setdefault(gr["date"], {"kind": "off"})
+                cell["unavailable"] = gr["disruption"]
+    rows.sort(key=lambda r: (r["airline"], RANK_ORDER.get(r["rank"], 9), r["crew_id"]))
+    return {"today": day_of(Context.open(g).now_ts), "dates": sorted(dates), "crew": rows}
+
+
+@app.post("/api/disruptions/{disruption_id}/withdraw")
+def withdraw_disruption(disruption_id: str, crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
+    caller = _caller(crewops_user)
+    return _guard(plans.withdraw, graphs().ops, disruption_id, caller.username)

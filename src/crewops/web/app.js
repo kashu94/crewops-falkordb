@@ -103,7 +103,7 @@ const PAGE_TITLE = {
   report: ["Report a disruption", "The triage agent analyses it within a few seconds"],
   absence: ["Report absence", "Tell crew control you cannot fly"],
   roster: ["My schedule", "Your flights, duty times and reserve days (all times UTC)"],
-  crew: ["Crew schedules", "Look up any crew member's flights and duty days (all times UTC)"],
+  crew: ["Crew schedules", "Every crew member's week across all three airlines (times UTC)"],
   assistant: ["Assistant", "Ask about crew, cover, legality, delays and decisions"],
   network: ["Network", "Graph algorithms over the route network, and the rules that exclude crew"],
 };
@@ -287,19 +287,19 @@ const PAGES = {
   },
 
   async crew(el, id) {
+    if (!id) return rosterBoard(el);
     el.innerHTML = `<div class="card"><div class="card-body">
         <form id="crew-search" class="ask" style="padding:0;border:0">
+          <a class="btn secondary" href="#/crew">&larr; All crew</a>
           <input id="crew-q" autocomplete="off" placeholder="Crew id or name, e.g. C-1042 or Pillai" value="${esc(id || "")}">
           <button class="btn" type="submit">Show schedule</button>
         </form>
-        <p class="muted small" style="margin-top:8px">Try C-1042 (captain), C-3310 (reserve captain) or C-5417 (cabin crew).</p>
       </div></div><div id="crew-result"></div>`;
     $("#crew-search").addEventListener("submit", (e) => {
       e.preventDefault();
       const q = $("#crew-q").value.trim();
       if (q) location.hash = `#/crew/${encodeURIComponent(q)}`;
     });
-    if (!id) return;
     const box = $("#crew-result");
     box.innerHTML = `<div class="card empty">Loading...</div>`;
     const out = await api("/api/tools/crew_schedule", { method: "POST", body: { crew: id } });
@@ -363,6 +363,54 @@ const PAGES = {
 // ---------- shared pieces ----------
 
 const tile = (label, value, sub, ic = null) => `<div class="card tile">${ic ? `<div class="tile-icon">${icon(ic)}</div>` : ""}<div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
+let boardFilter = { airline: "", rank: "", q: "" };
+
+async function rosterBoard(el) {
+  const b = await api("/api/roster-board");
+  const airlines = [...new Map(b.crew.map((c) => [c.airline, c.airline_name])).entries()];
+  const ranks = ["Captain", "First Officer", "Senior Cabin Crew", "Cabin Crew"];
+  const cell = (c, day) => {
+    const x = c.days[day];
+    if (!x) return `<td class="rb-off">-</td>`;
+    if (x.unavailable) return `<td class="rb-cell rb-unavail" title="Unavailable (${esc(x.unavailable)})"><b>Unavailable</b><span>${esc(x.unavailable)}</span></td>`;
+    if (x.kind === "reserve") return `<td class="rb-cell rb-reserve" title="On call ${esc(x.window)} UTC"><b>Reserve</b><span>${esc(x.window)}</span></td>`;
+    return `<td class="rb-cell rb-duty" title="${esc(x.pairing)} as ${esc(x.role)}: report ${esc(x.report)}, release ${esc(x.release)} UTC, ${x.sectors} flights${x.via_plan ? ` (added by ${esc(x.via_plan)})` : ""}">
+      <b>${esc(x.pairing)}</b><span>${esc(x.report)}-${esc(x.release)} &middot; ${x.sectors} fl</span></td>`;
+  };
+  const draw = () => {
+    const f = boardFilter;
+    const q = f.q.trim().toLowerCase();
+    const rows = b.crew.filter((c) => (!f.airline || c.airline === f.airline) && (!f.rank || c.rank === f.rank)
+      && (!q || c.crew_id.toLowerCase().includes(q) || c.name.toLowerCase().includes(q)));
+    const flying = (day) => rows.filter((c) => c.days[day] && c.days[day].kind === "duty" && !c.days[day].unavailable).length;
+    el.querySelector("#rb-table").innerHTML = `
+      <thead><tr><th class="rb-name">Crew (${rows.length})</th>${b.dates.map((d) => `<th class="${d < b.today ? "rb-past" : d === b.today ? "rb-today" : ""}">${esc(fmtDay(d))}<div class="rb-count">${flying(d)} flying</div></th>`).join("")}</tr></thead>
+      <tbody>${rows.map((c) => `<tr data-go="#/crew/${esc(c.crew_id)}">
+        <td class="rb-name"><i style="background:${esc(c.color)}"></i><b>${esc(c.crew_id)}</b> ${esc(c.name)}<div class="muted small">${esc(c.rank)} &middot; ${esc(c.base)}${c.status !== "active" ? ` &middot; ${esc(c.status)}` : ""}</div></td>
+        ${b.dates.map((d) => cell(c, d)).join("")}</tr>`).join("") || `<tr><td colspan="${b.dates.length + 1}" class="empty">No crew match these filters.</td></tr>`}</tbody>`;
+    bindRows(el.querySelector("#rb-table"));
+  };
+  el.innerHTML = `<div class="card">
+    <div class="card-head rb-filters">
+      <div class="seg" role="tablist">${[["", "All airlines"], ...airlines].map(([code, name]) => `<button type="button" data-airline="${esc(code)}" class="${boardFilter.airline === code ? "on" : ""}">${esc(name)}</button>`).join("")}</div>
+      <div class="rb-right">
+        <select id="rb-rank" aria-label="Rank"><option value="">All ranks</option>${ranks.map((r) => `<option ${boardFilter.rank === r ? "selected" : ""}>${r}</option>`).join("")}</select>
+        <input id="rb-q" placeholder="Search name or id" value="${esc(boardFilter.q)}" autocomplete="off">
+      </div>
+    </div>
+    <div class="rb-legend small"><span><i class="rb-duty"></i>On duty (trip, report-release UTC, flights)</span><span><i class="rb-reserve"></i>Reserve (on-call window)</span>
+      <span><i class="rb-unavail"></i>Unavailable</span><span>- Day off</span><span class="muted">Click a row for the full flight schedule.</span></div>
+    <div class="rb-wrap"><table id="rb-table" class="rb"></table></div></div>`;
+  el.querySelectorAll("[data-airline]").forEach((btn) => btn.addEventListener("click", () => {
+    boardFilter.airline = btn.dataset.airline;
+    el.querySelectorAll("[data-airline]").forEach((x) => x.classList.toggle("on", x === btn));
+    draw();
+  }));
+  $("#rb-rank").addEventListener("change", (e) => { boardFilter.rank = e.target.value; draw(); });
+  $("#rb-q").addEventListener("input", (e) => { boardFilter.q = e.target.value; draw(); });
+  draw();
+}
+
 function scheduleHtml(p) {
   const trips = new Set(p.duty_days.map((d) => d.pairing)).size;
   const flights = p.duty_days.reduce((n, d) => n + d.flights.length, 0);
@@ -443,6 +491,8 @@ async function renderDetail(box, id) {
   const ownDesk = isController && d.status === "OPTIONS_READY" && (!d.desk || d.desk === me.desk);
   const canSubmit = ownDesk && plannable;
   const canClose = ownDesk;
+  const committed = plans.some((p) => p.status === "COMMITTED");
+  const canWithdraw = !committed && (d.reporter === me.username || me.roles.some((r) => ["controller", "admin", "super_admin"].includes(r)));
   const canApprove = me.roles.includes("approver") && pending && pending.submitted_by !== me.name;
   let note = "";
   if (isController && d.status === "OPTIONS_READY" && d.desk && d.desk !== me.desk) note = `This disruption belongs to ${esc(d.desk)}. Only that desk can submit a plan.`;
@@ -511,6 +561,7 @@ async function renderDetail(box, id) {
       <div class="actions">
         ${canSubmit ? `<button class="btn" id="submit-plan" type="button">${icon("check")} Submit plan for approval</button>` : ""}
         ${canClose ? `<button class="btn secondary" id="close-d" type="button">Close without a plan</button>` : ""}
+        ${canWithdraw ? `<button class="btn danger" id="withdraw-d" type="button">Withdraw report</button>` : ""}
         ${canApprove ? `<button class="btn" id="approve-plan" type="button">${icon("check")} Approve ${esc(pending.plan)}</button><button class="btn danger" id="reject-plan" type="button">Reject</button>` : ""}
       </div>
       <p id="action-msg" class="small error"></p>
@@ -533,6 +584,14 @@ async function renderDetail(box, id) {
     b.outerHTML = o ? `<div class="muted small">Legal, ranked ${o.rank}. Cheaper: ${o.ranked_above.map((x) => `${esc(x.crew)} (${inr(x.cost)})`).join(", ")}</div>` : "";
   }));
   act("#submit-plan", () => submitPlan(id, box), "Plan submitted. An approver will see it in their queue.");
+  act("#withdraw-d", async () => {
+    const ok = await confirmModal("Withdraw this report?",
+      `<p>${esc(d.id)} and its analysis, options and any plans waiting for approval will be removed. The crew it grounded become available again.</p>
+       <p>Use this for reports made by mistake.</p>`, "Yes, withdraw it");
+    if (!ok) return SKIP;
+    await api(`/api/disruptions/${id}/withdraw`, { method: "POST" });
+    location.hash = location.hash.split("/").slice(0, 2).join("/");
+  }, "Report withdrawn.");
   act("#close-d", () => api(`/api/disruptions/${id}/close`, { method: "POST", body: { note: "handled without a plan" } }), "Disruption closed.");
   act("#approve-plan", () => api(`/api/plans/${pending.plan}/approve`, { method: "POST" }), "Approved. The roster was updated in one graph write.");
   act("#reject-plan", async () => {
@@ -661,7 +720,8 @@ const CAUSES = ["technical", "weather", "air traffic control", "late inbound", "
 async function renderReport(el, kinds, fixedCrew = null) {
   formOptions = formOptions || (await api("/api/form-options"));
   const o = formOptions;
-  const day0 = "2026-10-13";
+  const day0 = o.first_date;
+  const later = (n) => { const d = new Date(day0 + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); const v = d.toISOString().slice(0, 10); return v > o.last_date ? o.last_date : v; };
   let kind = kinds[0];
   const AIRLINES = { DX: "Deccan Express", KS: "Konkan Skyways", NG: "Nilgiri Connect" };
   const crewOptions = Object.entries(AIRLINES).map(([code, name]) => `<optgroup label="${esc(name)}">${o.crew
@@ -687,19 +747,19 @@ async function renderReport(el, kinds, fixedCrew = null) {
     ],
     certification_lapse: () => [
       field("Crew member", crewPicker()),
-      field("Grounded from", dateInput("from_date", "2026-10-16")),
+      field("Grounded from", dateInput("from_date", later(3))),
       field("Certificate", select("cert_type", CERTS.map(([v, t]) => `<option value="${v}">${t}</option>`).join(""), "Choose a certificate")),
     ],
     flight_delay: () => [
-      field("Date", dateInput("date", "2026-10-14")),
-      field("Flight", select("flight_id", flightsFor("2026-10-14"), "Choose a flight")),
+      field("Date", dateInput("date", later(1))),
+      field("Flight", select("flight_id", flightsFor(later(1)), "Choose a flight")),
       field("Delay (hours)", `<input type="number" name="delay_hours" min="0.25" max="12" step="0.25" value="1.5" required>`),
       field("Cause", select("cause", CAUSES.map((c) => `<option>${c}</option>`).join(""), "Choose a cause")),
     ],
     station_closure: () => [
       field("Station", select("station", o.stations.map((st) => `<option ${st === "BLR" ? "selected" : ""}>${st}</option>`).join(""), "Choose a station")),
-      field("Closed from", dtInput("start", "2026-10-15T08:00"), "(UTC)"),
-      field("Until", dtInput("end", "2026-10-15T14:00"), "(UTC)"),
+      field("Closed from", dtInput("start", `${later(2)}T08:00`), "(UTC)"),
+      field("Until", dtInput("end", `${later(2)}T14:00`), "(UTC)"),
     ],
     gate_closure: () => {
       const byStation = {};
@@ -708,8 +768,8 @@ async function renderReport(el, kinds, fixedCrew = null) {
         `<option value="${esc(g.id)}">${esc(g.id)}${g.emergency ? " (emergency)" : ""}</option>`).join("")}</optgroup>`).join("");
       return [
         field("Gate", select("gate", gates, "Choose a gate")),
-        field("Closed from", dtInput("start", "2026-10-13T00:00"), "(UTC)"),
-        field("Until", dtInput("end", "2026-10-13T06:00"), "(UTC)"),
+        field("Closed from", dtInput("start", `${day0}T00:00`), "(UTC)"),
+        field("Until", dtInput("end", `${day0}T06:00`), "(UTC)"),
       ];
     },
   };
@@ -728,6 +788,16 @@ async function renderReport(el, kinds, fixedCrew = null) {
         ranks legal cover, and hands it to the controller desk with the fewest open disruptions.</div></div>`;
     el.querySelectorAll(".kind").forEach((b) => b.addEventListener("click", () => { kind = b.dataset.kind; draw(); }));
     const form = $("#report-form");
+    // "To" can never be earlier than "From"; closures cannot end before they start
+    const pairs = [["from_date", "to_date"], ["start", "end"]];
+    for (const [a, b] of pairs) {
+      const from = form.querySelector(`input[name="${a}"]`);
+      const to = form.querySelector(`input[name="${b}"]`);
+      if (!from || !to) continue;
+      const sync = () => { to.min = from.value; if (to.value && to.value < from.value) to.value = from.value; };
+      from.addEventListener("change", sync);
+      sync();
+    }
     const dateField = form.querySelector('input[name="date"]');
     if (dateField) dateField.addEventListener("change", () => {
       form.querySelector('select[name="flight_id"]').innerHTML = `<option value="">Choose a flight</option>${flightsFor(dateField.value)}`;
