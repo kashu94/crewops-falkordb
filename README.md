@@ -32,8 +32,8 @@ can show the Cypher queries it came from.
   carries over to the next session.
 - **Graph algorithms as tools.** PageRank and betweenness on the route network, weighted
   shortest paths for positioning crew, connected components.
-- **Three interfaces.** Web console, CLI and MCP server. The assistant uses Claude when an
-  API key is set, and a rule-based planner otherwise.
+- **Three interfaces.** Web console, CLI and MCP server. The assistant uses a language model
+  (a free open model through Groq, or Claude) when a key is set, and a rule-based planner otherwise.
 
 ## Why FalkorDB is needed
 
@@ -62,7 +62,7 @@ There is no other database in the project. Everything above is a graph query:
   | returns the Cypher it ran)                    |
   +-----------------+-----------------------------+
                     |
-   Assistant (Claude / planner)    Triage + notifier agents
+   Assistant (LLM / planner)       Triage + notifier agents
                     |                      |
                     v                      v
   +-------------------------+   +---------------------------------+
@@ -184,11 +184,18 @@ If port 6379 is already in use, copy `.env.example` to `.env` and set `FALKORDB_
 To run everything in Docker: `docker compose --profile app up -d --build`, then open
 http://localhost:8000.
 
-### Claude (optional)
+### Language model (optional)
 
-Set `ANTHROPIC_API_KEY` in `.env` to let the assistant use Claude (`claude-opus-5-5`, change
-with `CREWOPS_MODEL`). Without a key it uses the rule-based planner. Legality and costs
-always come from the graph tools.
+The assistant can use a language model to choose which graph tools to call:
+
+- **Free:** any OpenAI-compatible API, such as Groq with open models. Set `LLM_API_KEY`.
+  `LLM_MODEL` defaults to `qwen/qwen3.8-27b,openai/gpt-oss-120b,openai/gpt-oss-20b`; the
+  next model is tried when one hits its free rate limit. `LLM_BASE_URL` defaults to Groq;
+  OpenRouter or a local Ollama also work.
+- **Claude:** set `ANTHROPIC_API_KEY` (model `claude-opus-5-5`, change with `CREWOPS_MODEL`).
+
+Without a key, or if a model call fails, it uses the rule-based planner. Legality and costs
+always come from the graph tools, never from the model.
 
 ### CLI examples
 
@@ -252,14 +259,14 @@ docker run --rm -p 8000:8000 crewops-allinone      # http://localhost:8000
 ## Tests
 
 ```bash
-uv run pytest       # 77 tests, needs FalkorDB running
+uv run pytest       # 78 tests, needs FalkorDB running
 uv run ruff check .
 ```
 
 The tests compare results with the expected values in
 [data/eval/scenarios.json](data/eval/scenarios.json) (cover options and costs, exclusions,
 station closure, delay breach, joint plan for two sick captains) and also cover parallel
-triage agents, tamper detection, memory isolation and the Claude tool loop.
+triage agents, tamper detection, memory isolation and the model tool loops.
 
 ## Data
 

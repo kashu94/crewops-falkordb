@@ -45,6 +45,11 @@ class Settings:
     now: datetime = SEED_NOW
     model: str = "claude-opus-5-5"
     anthropic_api_key: str | None = None
+    llm_api_key: str | None = None
+    """Key for an OpenAI-compatible API (Groq by default). Takes priority over Anthropic."""
+    llm_base_url: str = "https://api.groq.com/openai/v1"
+    llm_model: str = "qwen/qwen3.8-27b,openai/gpt-oss-120b,openai/gpt-oss-20b"
+    """One model, or a comma-separated list to try in order when one hits its rate limit."""
 
     @classmethod
     def from_env(cls, env_file: Path | None = None) -> Settings:
@@ -65,6 +70,9 @@ class Settings:
             now=parse_utc(now) if now else SEED_NOW,
             model=get("CREWOPS_MODEL", "claude-opus-5-5") or "claude-opus-5-5",
             anthropic_api_key=get("ANTHROPIC_API_KEY"),
+            llm_api_key=get("LLM_API_KEY"),
+            llm_base_url=get("LLM_BASE_URL", "https://api.groq.com/openai/v1") or "https://api.groq.com/openai/v1",
+            llm_model=get("LLM_MODEL") or "qwen/qwen3.8-27b,openai/gpt-oss-120b,openai/gpt-oss-20b",
         )
 
 

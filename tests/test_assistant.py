@@ -77,3 +77,62 @@ def test_model_outage_falls_back_to_the_planner(fresh, monkeypatch):
     answer = Assistant(fresh, "ananya.iyer", use_model=True).ask("Is C-3310 legal for P-2291?")
     assert answer.engine.startswith("planner (model unavailable")
     assert answer.text.startswith("Yes.")
+
+
+class _FakeResponse:
+    def __init__(self, body, status_code=200):
+        self.body = body
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self.body
+
+
+def test_open_model_api_drives_the_graph_tools(fresh, monkeypatch):
+    from crewops.config import Settings
+
+    sent = []
+
+    def fake_post(url, headers, json, timeout):
+        sent.append(json)
+        assert url == "https://api.groq.com/openai/v1/chat/completions"
+        assert headers["Authorization"] == "Bearer test-key"
+        if len(sent) == 1:
+            call = {
+                "id": "c1",
+                "type": "function",
+                "function": {"name": "check_legality", "arguments": '{"crew_id": "C-3310", "pairing_id": "P-2291"}'},
+            }
+            return _FakeResponse({"choices": [{"message": {"content": "", "tool_calls": [call]}}]})
+        assert json["messages"][-1]["role"] == "tool" and '"legal":true' in json["messages"][-1]["content"]
+        return _FakeResponse({"choices": [{"message": {"content": "<think>x</think>Yes, C-3310 is legal."}}]})
+
+    monkeypatch.setattr("httpx.post", fake_post)
+    monkeypatch.setattr("crewops.agents.assistant.settings", lambda: Settings(llm_api_key="test-key"))
+    answer = Assistant(fresh, "ananya.iyer").ask("Is C-3310 legal for P-2291?")
+    assert answer.text == "Yes, C-3310 is legal."
+    assert answer.engine == "qwen/qwen3.8-27b"
+    assert sent[0]["tools"][0]["type"] == "function"
+
+
+def test_rate_limited_model_falls_through_to_the_next(fresh, monkeypatch):
+    from crewops.config import Settings
+
+    used = []
+
+    def fake_post(url, headers, json, timeout):
+        used.append(json["model"])
+        if json["model"] == "first":
+            return _FakeResponse({"error": "rate limit"}, status_code=429)
+        return _FakeResponse({"choices": [{"message": {"content": "Hello from the second model."}}]})
+
+    monkeypatch.setattr("httpx.post", fake_post)
+    monkeypatch.setattr(
+        "crewops.agents.assistant.settings", lambda: Settings(llm_api_key="k", llm_model="first, second")
+    )
+    answer = Assistant(fresh, "ananya.iyer").ask("hello there")
+    assert used == ["first", "second"]
+    assert answer.engine == "second"

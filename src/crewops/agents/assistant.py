@@ -28,12 +28,30 @@ work them out yourself, and quote crew ids, costs (INR) and flight ids exactly a
 - Prefer one or two well-chosen tool calls. For "who covers X" find the seat first (blast_radius for a \
 crew member, get_disruption for a disruption), then find_cover.
 - When a tool returns an error, say what is missing or not allowed rather than guessing.
+- Write plain text with no Markdown (no asterisks, headings or tables).
 - Keep answers short enough to read aloud: lead with the recommendation, then the cost, then one line \
 on why the next options lost. Say which rules ruled people out when it matters.
 - You can only read and report through these tools; approvals need a human approver and you cannot \
 bypass that. Never claim an action happened unless a tool result says it did."""
 
 MAX_TOOL_ROUNDS = 6
+
+LLM_TOOLS = {
+    "find_cover",
+    "check_legality",
+    "blast_radius",
+    "delay_impact",
+    "get_disruption",
+    "explain_decision",
+    "why_not",
+    "who_to_tell",
+    "crew_profile",
+    "reserves",
+    "my_inbox",
+    "station_criticality",
+}
+"""Tools offered to OpenAI-compatible models. A smaller list keeps requests inside free-tier
+token limits."""
 
 
 @dataclass
@@ -80,15 +98,19 @@ class Assistant:
         self.new_session = session_id is None
         self.session_id = session_id or self.memory.start_session(self.now_ts)
         cfg = settings()
-        self.use_model = bool(cfg.anthropic_api_key) if use_model is None else use_model
-        self.model = cfg.model
+        # An OpenAI-compatible key (Groq by default) wins over an Anthropic key.
+        self.provider = "openai" if cfg.llm_api_key else "anthropic"
+        self.use_model = bool(cfg.llm_api_key or cfg.anthropic_api_key) if use_model is None else use_model
+        self.models = [m.strip() for m in cfg.llm_model.split(",") if m.strip()]
+        self.model = self.models[0] if self.provider == "openai" else cfg.model
+        self.cfg = cfg
 
     # --- context from memory -----------------------------------------------------------------
 
     def focus(self) -> dict[str, str | None]:
         return {k: self.memory.last_entity(k, self.session_id) for k in ("crew", "pairing", "disruption", "plan")}
 
-    def _context_block(self) -> str:
+    def _context_block(self, turns: int = 4) -> str:
         lines = [
             f"Signed in: {self.caller.name} ({self.caller.username}), roles {', '.join(sorted(self.caller.roles))}"
             + (f", desk {self.caller.desk}" if self.caller.desk else "")
@@ -101,7 +123,7 @@ class Assistant:
         facts = self.memory.facts()
         if facts:
             lines.append("Stored preferences: " + ", ".join(f"{k}={v}" for k, v in facts.items()))
-        recent = self.memory.recent_turns(self.session_id, 4)
+        recent = self.memory.recent_turns(self.session_id, turns)
         if recent:
             lines.append(
                 "Recent turns:\n" + "\n".join(f"- Q: {t['question']}\n  A: {t['answer'][:300]}" for t in recent)
@@ -115,7 +137,7 @@ class Assistant:
         answer: Answer | None = None
         if self.use_model:
             try:
-                answer = self._ask_model(question)
+                answer = self._ask_openai(question) if self.provider == "openai" else self._ask_model(question)
             except Exception as exc:  # fall back to the planner if the API call fails
                 answer = self._ask_planner(question)
                 answer.engine = f"planner (model unavailable: {type(exc).__name__})"
@@ -195,6 +217,84 @@ class Assistant:
                     }
                 )
             messages.append({"role": "user", "content": results})
+        raise RuntimeError("tool loop did not finish")
+
+    # --- OpenAI-compatible APIs (Groq, OpenRouter, a local Ollama) ---------------------------
+
+    def _ask_openai(self, question: str) -> Answer:
+        import httpx
+
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            p.name: {
+                                "type": p.schema()["type"] if p.required else p.schema()["type"][0],
+                                "description": p.description,
+                                **({"enum": list(p.enum)} if p.enum else {}),
+                            }
+                            for p in t.params
+                        },
+                        "required": [p.name for p in t.params if p.required],
+                    },
+                },
+            }
+            for t in registry.available(self.caller, include_writes=False)
+            if t.name in LLM_TOOLS
+        ]
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": f"{SYSTEM_PROMPT}\n\n<context>\n{self._context_block(turns=2)}\n</context>"},
+            {"role": "user", "content": question},
+        ]
+        calls: list[dict[str, Any]] = []
+        url = self.cfg.llm_base_url.rstrip("/") + "/chat/completions"
+        headers = {"Authorization": f"Bearer {self.cfg.llm_api_key}"}
+        models = list(self.models)
+        for _ in range(MAX_TOOL_ROUNDS):
+            while True:
+                response = httpx.post(
+                    url,
+                    headers=headers,
+                    json={
+                        "model": models[0],
+                        "messages": messages,
+                        "tools": tools,
+                        "tool_choice": "auto",
+                        "temperature": 0.2,
+                        "max_tokens": 1024,
+                    },
+                    timeout=60,
+                )
+                # free tiers limit tokens per model; try the next model in the list
+                if response.status_code == 429 and len(models) > 1:
+                    models.pop(0)
+                    continue
+                break
+            response.raise_for_status()
+            message = response.json()["choices"][0]["message"]
+            tool_calls = message.get("tool_calls") or []
+            if not tool_calls:
+                text = re.sub(r"<think>.*?</think>", "", message.get("content") or "", flags=re.S).strip()
+                return Answer(text or "I could not find an answer in the graph.", _intent_of(calls), models[0], calls)
+            messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": tool_calls})
+            for call in tool_calls:
+                try:
+                    args = json.loads(call["function"].get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                out = self._call(calls, call["function"]["name"], args)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call["id"],
+                        "content": json.dumps(out.get("result", out), default=str, separators=(",", ":"))[:4000],
+                    }
+                )
         raise RuntimeError("tool loop did not finish")
 
     # --- the deterministic planner -------------------------------------------------------------

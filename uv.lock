@@ -185,6 +185,7 @@ dependencies = [
     { name = "anthropic" },
     { name = "falkordb" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "mcp" },
     { name = "uvicorn" },
 ]
@@ -201,6 +202,7 @@ requires-dist = [
     { name = "anthropic", specifier = ">=1.15,<2" },
     { name = "falkordb", specifier = ">=1.8,<2" },
     { name = "fastapi", specifier = ">=0.143" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "mcp", specifier = ">=2.3,<3" },
     { name = "uvicorn", specifier = ">=0.54" },
 ]
