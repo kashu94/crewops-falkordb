@@ -11,7 +11,9 @@ CASES = [("S1", "P-2224", "Captain"), ("S2", "P-2291", "Captain"), ("S5", "P-221
 def test_ranked_options_match_answer_key(loaded, scenarios, sid, pairing, role):
     result = find_options(loaded.ops, pairing, role)
     key = scenarios[sid]["answer_key"]["options"]
-    assert [(o.crew_id, o.cost_inr) for o in result.options] == [(o.get("crew_id"), o.get("cost_inr")) for o in key]
+    # the scenarios predate the delay option, which is checked separately below
+    ranked = [o for o in result.options if o.strategy is not Strategy.DELAY]
+    assert [(o.crew_id, o.cost_inr) for o in ranked] == [(o.get("crew_id"), o.get("cost_inr")) for o in key]
     excluded = {e.crew_id for e in result.excluded}
     assert {e["crew_id"] for e in scenarios[sid]["answer_key"].get("excluded_candidates", [])} <= excluded
 
@@ -40,3 +42,19 @@ def test_funnel_accounts_for_every_candidate(loaded):
 def test_a_started_pairing_cannot_be_recrewed(loaded):
     with pytest.raises(AlreadyStarted):
         find_options(loaded.ops, "P-2201", "Captain")  # flew on 12 Oct, before the snapshot
+
+
+def test_holding_the_trip_is_offered_when_it_frees_someone(loaded):
+    result = find_options(loaded.ops, "P-2213", "Cabin Crew")
+    delay = [o for o in result.options if o.strategy is Strategy.DELAY]
+    assert len(delay) == 1
+    assert (delay[0].crew_id, delay[0].delay_hours) == ("C-1329", 2.0)
+    assert delay[0].cost_breakdown["delay"] == 2 * 5400
+    assert result.options[-1].strategy is Strategy.CANCEL
+    assert result.recommended.strategy is not Strategy.DELAY
+
+
+def test_no_hold_option_when_no_delay_helps(loaded):
+    result = find_options(loaded.ops, "P-2291", "Captain")
+    assert result.delay_checked
+    assert not [o for o in result.options if o.strategy is Strategy.DELAY]

@@ -111,9 +111,9 @@ const PAGE_TITLE = {
 // ---------- landing ----------
 
 const GROUPS = [
+  ["reporter", "Reporters", "Log disruptions as they happen."],
   ["controller", "Controllers", "Plan cover for disruptions on their desk."],
   ["approver", "Approvers", "Approve or reject submitted plans."],
-  ["reporter", "Reporters", "Log disruptions as they happen."],
   ["crew", "Crew", "See their roster and report absence."],
   ["oversight", "Oversight", "Auditor and admins: read-only view."],
 ];
@@ -125,9 +125,17 @@ async function showLanding() {
   me = null;
   $("#app").hidden = true;
   $("#landing").hidden = false;
-  $("#hero-map").innerHTML = routeMap(null, true);
-  const [team, health] = await Promise.all([api("/api/team"), api("/api/health").catch(() => ({}))]);
+  const [team, health, departures] = await Promise.all([
+    api("/api/team"), api("/api/health").catch(() => ({})), api("/api/board?limit=7").catch(() => []),
+  ]);
   $("#landing-clock").textContent = fmtIso(health.clock);
+  $("#board-clock").textContent = fmtIso(health.clock);
+  $("#board-rows").innerHTML = departures.map((f, i) => {
+    const status = f.status === "cancelled" ? ["cancelled", "Cancelled"] : f.delay_minutes ? ["late", `Delayed ${f.delay_minutes}m`] : ["ok", "On time"];
+    return `<div class="board-row" style="animation-delay:${i * 90}ms"><span><i style="background:${esc(f.color)}"></i>${esc(f.flight)}</span>
+      <span>${esc(f.dest)}</span><span>${esc(f.departs)}</span><span>${esc((f.gate || "-").split("-")[1] || "-")}</span>
+      <span class="st ${status[0]}">${status[1]}</span></div>`;
+  }).join("");
   $("#people").innerHTML = GROUPS.map(([key, title, sub]) => {
     const people = team.filter((u) => {
       const r = primaryRole(u.roles);
@@ -367,7 +375,8 @@ function scheduleHtml(p) {
       </div>
       <table><thead><tr><th>Flight</th><th>Route</th><th>Departs</th><th>Arrives</th><th>Aircraft</th><th>Gate</th><th>Status</th></tr></thead><tbody>
       ${d.flights.map((f) => `<tr><td><b>${esc(f.flight)}</b></td><td>${esc(f.from)} &rarr; ${esc(f.to)}</td><td>${esc(f.departs)}</td><td>${esc(f.arrives)}</td>
-        <td>${esc(f.aircraft)}</td><td>${esc(f.gate || "-")}</td><td>${f.status === "cancelled" ? `<span class="badge REJECTED">Cancelled</span>` : `<span class="muted">Scheduled</span>`}</td></tr>`).join("")}
+        <td>${esc(f.aircraft)}</td><td>${esc(f.gate || "-")}</td><td>${f.status === "cancelled" ? `<span class="badge REJECTED">Cancelled</span>`
+          : f.delay_minutes ? `<span class="badge OPTIONS_READY">Delayed ${Math.round(f.delay_minutes / 6) / 10}h</span>` : `<span class="muted">Scheduled</span>`}</td></tr>`).join("")}
       </tbody></table>
     </div>`).join("");
   return `
@@ -377,8 +386,10 @@ function scheduleHtml(p) {
       ${tile("Trips", num(trips), `${num(flights)} flights on ${num(p.duty_days.length)} duty days`)}
       ${tile("Reserve days", num(p.reserve.length), p.reserve.length ? `on call at ${esc(p.reserve[0].base)}` : "not on reserve")}
     </div>
+    ${(p.handed_over || []).map((h) => `<div class="notice">Trip <b>${esc(h.pairing)}</b> was handed to ${esc(h.covered_by_name)} (${esc(h.covered_by)})
+      by plan ${esc(h.plan)}, so its flights are no longer on this schedule.</div>`).join("")}
     <div class="card"><div class="card-head"><h3>Flights and duty days</h3><span class="muted small">times in UTC</span></div><div class="card-body" style="padding-top:2px">
-      ${days || `<div class="empty">No rostered flights this week.</div>`}
+      ${days || `<div class="empty">${p.reserve.length ? "No flights this week: on reserve (see below)." : "No rostered flights this week."}</div>`}
     </div></div>
     ${p.reserve.length ? `<div class="card"><div class="card-head"><h3>Reserve (on call)</h3></div>
       <table><thead><tr><th>Date</th><th>Window (UTC)</th><th>Base</th></tr></thead><tbody>
@@ -440,9 +451,11 @@ async function renderDetail(box, id) {
   if (d.status === "REPORTED" || d.status === "ANALYSING") note = "The triage agent is analysing this disruption. Refresh in a few seconds.";
 
   const jointPick = Object.fromEntries((a.joint_plan ? a.joint_plan.assignments : []).map((x) => [x.gap, x.crew_id]));
+  const activePlan = plans.find((p) => p.status === "SUBMITTED" || p.status === "COMMITTED");
+  const chosen = Object.fromEntries((activePlan ? activePlan.assignments : []).map((x) => [x.gap, x.crew]));
   let body = "";
   (a.gaps || []).forEach((g, gi) => {
-    const opts = g.options.slice(0, 7);
+    const opts = g.options;
     const best = opts.find((o) => o.crew_id);
     const pick = jointPick[g.gap] || (best ? best.crew_id : opts.some((o) => o.strategy === "short_crew") ? "short" : "cancel");
     const value = (o) => (o.crew_id ? `crew:${o.crew_id}` : o.strategy === "short_crew" ? "short" : "cancel");
@@ -454,12 +467,14 @@ async function renderDetail(box, id) {
       </div>
       <div class="funnel">${g.funnel.map((st) => `<span class="chip">${esc(st.stage)} <b>${st.remaining}</b>${st.dropped ? ` <span class="muted">(-${st.dropped})</span>` : ""}</span>`).join("")}</div>
       <table><thead><tr>${canSubmit ? "<th></th>" : ""}<th>#</th><th>Option</th><th class="num">Cost</th><th class="num">Delay</th></tr></thead><tbody>
-      ${opts.map((o, i) => `<tr class="${o === best ? "best" : ""} ${o.strategy === "cancel" ? "cancel-row" : ""}">
+      ${opts.map((o, i) => `<tr class="${activePlan ? (chosen[g.gap] === o.crew_id && o.crew_id ? "chosen" : "") : o === best ? "best" : ""} ${o.strategy === "cancel" ? "cancel-row" : ""}">
         ${canSubmit ? `<td class="pick"><input type="radio" name="gap-${gi}" value="${esc(value(o))}" data-gap="${esc(g.gap)}" data-pairing="${esc(g.pairing_id)}"
           data-cost="${o.cost_inr}" data-label="${esc(o.action)}" data-pax="${g.passengers || 0}" ${isPick(o) ? "checked" : ""} aria-label="Choose option ${o.rank}"></td>` : ""}
-        <td>${o.rank}</td><td>${esc(o.action)}${o === best ? `<span class="tag-best">Recommended</span>` : ""}
-        ${o.crew_id && o !== best ? `<button class="link why" data-crew="${esc(o.crew_id)}" type="button">why not first?</button>` : ""}</td>
+        <td>${o.rank}</td><td>${esc(o.action)}${o === best ? `<span class="tag-best">Recommended</span>` : ""}${activePlan && o.crew_id && chosen[g.gap] === o.crew_id ? `<span class="tag-chosen">Chosen in ${esc(activePlan.plan)}</span>` : ""}
+        ${o.crew_id && o !== best && o.strategy !== "delay_departure" ? `<button class="link why" data-crew="${esc(o.crew_id)}" type="button">why not first?</button>` : ""}</td>
         <td class="num">${inr(o.cost_inr)}</td><td class="num">${o.delay_hours ? o.delay_hours + "h" : "-"}</td></tr>`).join("")}
+      ${g.delay_checked && !opts.some((o) => o.strategy === "delay_departure") ? `<tr class="note-row">${canSubmit ? "<td></td>" : ""}<td></td>
+        <td colspan="3" class="muted small">Delay: holding the trip up to 4h does not make anyone else legal.</td></tr>` : ""}
       </tbody></table></div>`;
   });
   if ((a.proposed_cancellations || []).length) {

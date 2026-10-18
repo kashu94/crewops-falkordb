@@ -225,8 +225,15 @@ OPTIONAL MATCH (f)-[:BOARDS_AT]->(g:Gate)
 RETURN d.date AS date, p.id AS pairing, a.role AS role, a.via_plan AS via_plan,
        d.report_ts AS report_ts, d.release_ts AS release_ts, l.seq AS seq,
        f.id AS flight_id, f.no AS flight_no, o.code AS origin, t.code AS dest,
-       f.dep_ts AS dep_ts, f.arr_ts AS arr_ts, f.status AS status, ac.tail AS aircraft, g.id AS gate
+       f.dep_ts AS dep_ts, f.arr_ts AS arr_ts, f.status AS status, ac.tail AS aircraft, g.id AS gate,
+       coalesce(f.delay_minutes, 0) AS delay_minutes
 ORDER BY dep_ts
+"""
+
+SCHEDULE_HANDED_OVER = """
+MATCH (pl:Plan {status: 'COMMITTED'})-[:HAS]->(x:Assignment {vacated: $id})-[:ASSIGNS]->(c:Crew)
+RETURN x.pairing AS pairing, pl.id AS plan, c.id AS covered_by, c.name AS covered_by_name
+ORDER BY plan
 """
 
 SCHEDULE_RESERVE = """
@@ -269,16 +276,19 @@ def _crew_schedule(gs, caller, crew):
                 "aircraft": r["aircraft"],
                 "gate": r["gate"],
                 "status": r["status"],
+                "delay_minutes": r["delay_minutes"],
             }
         )
     reserve = [
         {"date": r["date"], "window": f"{hhmm(r['start_ts'])}-{hhmm(r['end_ts'])}", "base": r["base"]}
         for r in run(gs.ops, "schedule_reserve", SCHEDULE_RESERVE, {"id": cid}, read_only=True)
     ]
+    handed_over = run(gs.ops, "schedule_handed_over", SCHEDULE_HANDED_OVER, {"id": cid}, read_only=True)
     keep = ("crew_id", "name", "rank", "status", "base", "airline", "ratings", "grounded_by")
     return {k: profile[k] for k in keep} | {
         "duty_days": sorted(days.values(), key=lambda d: d["date"]),
         "reserve": reserve,
+        "handed_over": handed_over,
     }
 
 

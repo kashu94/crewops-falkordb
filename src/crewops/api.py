@@ -354,3 +354,27 @@ def form_options(crewops_user: str | None = Depends(signed_in)) -> dict[str, Any
     dates = sorted({f["date"] for f in row["flights"]})
     stations = sorted({f["from"] for f in row["flights"]} | {f["to"] for f in row["flights"]})
     return row | {"stations": stations, "first_date": dates[0], "last_date": dates[-1]}
+
+
+BOARD = """
+MATCH (f:Flight)-[:FROM]->(o:Station), (f)-[:TO]->(t:Station), (f)-[:ON]->(:Aircraft)-[:OPERATED_BY]->(al:Airline)
+WHERE f.dep_ts >= $now
+OPTIONAL MATCH (f)-[:BOARDS_AT]->(g:Gate)
+RETURN f.no AS flight, al.name AS airline, al.color AS color, o.code AS origin, t.code AS dest,
+       f.dep_ts AS dep_ts, f.status AS status, coalesce(f.delay_minutes, 0) AS delay_minutes, g.id AS gate
+ORDER BY dep_ts
+LIMIT $limit
+"""
+
+
+@app.get("/api/board")
+def board(limit: int = 8) -> list[dict[str, Any]]:
+    """Next departures, for the sign-in page. Fictional data, no sign-in needed."""
+    from crewops.legality import Context
+    from crewops.timeutil import hhmm
+
+    g = graphs().ops
+    rows = run(g, "departures_board", BOARD, {"now": Context.open(g).now_ts, "limit": min(limit, 20)}, read_only=True)
+    for r in rows:
+        r["departs"] = hhmm(r.pop("dep_ts"))
+    return rows

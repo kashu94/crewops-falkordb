@@ -15,6 +15,7 @@
   <!-- Sign-in: pick a team member -->
   <section id="landing" class="landing" hidden>
     <div class="hero">
+      <svg class="hero-plane" viewBox="0 0 640 400" aria-hidden="true"><path d="M612 182c14 0 26 8 26 18s-12 18-26 18H420L300 380h-46l64-162H176l-42 52h-36l26-70-26-70h36l42 52h142L254 20h46l120 162z"/></svg>
       <div class="hero-inner">
         <div class="brand hero-brand">
           <div class="logo-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 16l20-6-20-6 4 6-4 6zm4-6h8"/></svg></div>
@@ -28,7 +29,11 @@
           <li><span class="dot-ok"></span>Agents that coordinate through the graph</li>
           <li><span class="dot-ok"></span>Every answer shows the Cypher behind it</li>
         </ul>
-        <div id="hero-map" class="hero-map" aria-hidden="true"></div>
+        <div class="board" aria-label="Next departures">
+          <div class="board-head"><span>Departures</span><span id="board-clock" class="board-clock"></span></div>
+          <div class="board-cols"><span>Flight</span><span>To</span><span>Time</span><span>Gate</span><span>Status</span></div>
+          <div id="board-rows"></div>
+        </div>
       </div>
     </div>
     <div class="signin">

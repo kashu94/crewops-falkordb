@@ -425,6 +425,24 @@ def _analyse_crew(graph: Graph, d: dict[str, Any], ctx: Context) -> dict[str, An
     }
 
 
+def _kept_crew_options(result: OptionsResult) -> list:
+    """The top crew options plus any delay option, which ranks after them."""
+    from crewops.options import Strategy
+
+    kept = list(result.crew_options[:OPTIONS_KEPT])
+    kept += [o for o in result.crew_options if o.strategy is Strategy.DELAY and o not in kept]
+    return kept
+
+
+def _shown_options(result: OptionsResult) -> list:
+    """What a controller chooses from: the best crew options, then delay, short and cancel."""
+    from crewops.options import Strategy
+
+    crew = [o for o in result.crew_options if o.strategy is not Strategy.DELAY][:6]
+    rest = [o for o in result.options if o.strategy in (Strategy.DELAY, Strategy.SHORT_CREW, Strategy.CANCEL)]
+    return crew + rest
+
+
 def _write_gap(
     graph: Graph,
     disruption_id: str,
@@ -477,7 +495,7 @@ def _write_gap(
                     "breakdown": json.dumps(o.cost_breakdown),
                     "resilience": o.resilience,
                 }
-                for o in result.crew_options[:OPTIONS_KEPT]
+                for o in _kept_crew_options(result)
             ],
         },
     )
@@ -504,8 +522,8 @@ def _write_gap(
         "at_risk_flights": at_risk,
         "passengers": passengers,
         "recommended": rec.as_dict() if rec else None,
-        "options": [o.as_dict() for o in result.options[:OPTIONS_KEPT]]
-        + ([result.cancellation.as_dict()] if len(result.options) > OPTIONS_KEPT else []),
+        "options": [o.as_dict() for o in _shown_options(result)],
+        "delay_checked": result.delay_checked,
         "excluded_count": len(result.excluded),
         "funnel": result.as_dict()["funnel"],
     }

@@ -306,8 +306,10 @@ def assess_candidate(
     pairing: PairingView,
     delay_hours: float = 0.0,
     delay_date: str | None = None,
+    hold_hours: float = 0.0,
 ) -> Assessment:
-    """All seven rules for one crew member on every day of one pairing."""
+    """All seven rules for one crew member on every day of one pairing. ``hold_hours`` holds
+    the whole first day later (the trip waits for this crew member)."""
     if delay_hours < 0:
         raise ValueError("delay_hours cannot be negative")
     crew = cand.state
@@ -324,6 +326,9 @@ def assess_candidate(
         positioning = ctx.positioning(crew.base, first)
         if positioning and positioning.delay_hours:
             days[0] = days[0].shifted(positioning.delay_hours)
+
+    if hold_hours:
+        days[0] = days[0].shifted(hold_hours)
 
     if delay_hours:
         index = 0
@@ -391,9 +396,10 @@ def assess(
     delay_hours: float = 0.0,
     delay_date: str | None = None,
     ctx: Context | None = None,
+    hold_hours: float = 0.0,
 ) -> Assessment:
     """Legality of one crew member for one pairing, straight from the graph."""
     ctx = ctx or Context.open(graph)
     pairing = ctx.pairing(pairing_id)
     cand = ctx.candidates([crew_id], [d.date for d in pairing.days])[crew_id]
-    return assess_candidate(ctx, cand, pairing, delay_hours, delay_date)
+    return assess_candidate(ctx, cand, pairing, delay_hours, delay_date, hold_hours=hold_hours)

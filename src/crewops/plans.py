@@ -32,7 +32,8 @@ GAP_OPTION_QUERY = """
 MATCH (d:Disruption {id: $id})-[:HAS_GAP]->(g:Gap {id: $gap})-[o:OPTION]->(c:Crew {id: $crew})
 MATCH (g)-[:VACATED_BY]->(v:Crew)
 RETURN g.pairing AS pairing, g.role AS role, v.id AS vacated, o.strategy AS strategy,
-       o.cost AS cost, o.rank AS rank, o.action AS action
+       o.cost AS cost, o.rank AS rank, o.action AS action,
+       CASE WHEN o.strategy = 'delay_departure' THEN o.delay_hours ELSE 0.0 END AS hold
 """
 
 GAPS_QUERY = """
@@ -72,7 +73,7 @@ UNWIND $assignments AS a
 MATCH (g:Gap {id: a.gap}), (c:Crew {id: a.crew})
 CREATE (pl)-[:HAS]->(x:Assignment {gap: a.gap, crew: a.crew, strategy: a.strategy, cost: a.cost,
                                    action: a.action, pairing: a.pairing, role: a.role,
-                                   vacated: a.vacated})
+                                   vacated: a.vacated, hold: a.hold})
 CREATE (x)-[:FILLS]->(g), (x)-[:ASSIGNS]->(c)
 """
 
@@ -111,7 +112,16 @@ DELETE old
 FOREACH (_ IN CASE WHEN p IS NULL OR c IS NULL THEN [] ELSE [1] END |
   CREATE (c)-[:ASSIGNED {role: s.role, via_plan: pl.id}]->(p))
 WITH pl, moved, count(*) AS swapped
-RETURN pl.status AS status, moved, swapped
+UNWIND (CASE WHEN size($holds) = 0 THEN [null] ELSE $holds END) AS h
+OPTIONAL MATCH (dd:DutyDay {id: h.day})
+OPTIONAL MATCH (dd)-[:LEG]->(f:Flight)
+WITH pl, moved, swapped, h, dd, collect(f) AS legs
+FOREACH (f IN legs | SET f.dep_ts = f.dep_ts + h.secs, f.arr_ts = f.arr_ts + h.secs,
+                         f.delay_minutes = coalesce(f.delay_minutes, 0) + h.secs / 60)
+FOREACH (_ IN CASE WHEN dd IS NULL THEN [] ELSE [1] END |
+  SET dd.report_ts = dd.report_ts + h.secs, dd.release_ts = dd.release_ts + h.secs)
+WITH pl, moved, swapped, count(*) AS held
+RETURN pl.status AS status, moved, swapped, held
 """
 
 REJECT_PLAN = """
@@ -249,12 +259,12 @@ def submit(
         if not rows:
             raise PlanError(f"{crew} is not a legal option for {a['gap']}")
         r = rows[0]
-        check = assess(graph, crew, r["pairing"], ctx=ctx)
+        check = assess(graph, crew, r["pairing"], ctx=ctx, hold_hours=r["hold"] or 0.0)
         if not check.legal:
             raise PlanError(f"{crew} is no longer legal for {r['pairing']}: {check.blocking[0].detail}")
         resolved.append(
             {"gap": a["gap"], "crew": crew}
-            | {k: r[k] for k in ("pairing", "role", "vacated", "strategy", "cost", "action")}
+            | {k: r[k] for k in ("pairing", "role", "vacated", "strategy", "cost", "action", "hold")}
         )
     crew_ids = [a["crew"] for a in resolved]
     if len(set(crew_ids)) != len(crew_ids):
@@ -330,8 +340,13 @@ def approve(graph: Graph, plan_id: str, username: str, now_ts: int | None = None
     if fp != plan["fingerprint"]:
         log(graph, plan["disruption"], "tampered", username, f"{plan_id} changed since submission", ctx.now_ts)
         raise Tampered(f"TAMPERED: {plan_id} or the roster it was made against changed since submission")
+    holds = []
     for a in plan["assignments"]:
-        check = assess(graph, a["crew"], a["pairing"], ctx=ctx)
+        hold = a.get("hold") or 0.0
+        check = assess(graph, a["crew"], a["pairing"], ctx=ctx, hold_hours=hold)
+        if hold:
+            first = ctx.pairing(a["pairing"]).days[0]
+            holds.append({"day": f"{a['pairing']}/{first.date}", "secs": round(hold * 3600)})
         if not check.legal:
             raise PlanError(f"{a['crew']} is no longer legal for {a['pairing']}: {check.blocking[0].detail}")
 
@@ -352,6 +367,7 @@ def approve(graph: Graph, plan_id: str, username: str, now_ts: int | None = None
                 {"pairing": a["pairing"], "crew": a["crew"], "vacated": a["vacated"], "role": a["role"]}
                 for a in plan["assignments"]
             ],
+            "holds": holds,
         },
     )
     if not rows or rows[0]["status"] != "COMMITTED":

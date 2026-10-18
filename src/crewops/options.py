@@ -34,6 +34,7 @@ class Strategy(StrEnum):
     POSITIONING = "positioning"
     COMMAND_UPGRADE = "command_upgrade"
     RIGHT_SEAT = "right_seat"
+    DELAY = "delay_departure"
     SHORT_CREW = "short_crew"
     CANCEL = "cancel"
 
@@ -45,12 +46,16 @@ class Strategy(StrEnum):
             Strategy.POSITIONING: "Position from another base",
             Strategy.COMMAND_UPGRADE: "Command-qualified first officer",
             Strategy.RIGHT_SEAT: "Captain in the right seat",
+            Strategy.DELAY: "Delay departure",
             Strategy.SHORT_CREW: "Operate one cabin crew short",
             Strategy.CANCEL: "Cancel",
         }[self]
 
 
 SUBSTITUTE_BELOW = 3
+MAX_HOLD_HOURS = 4.0
+HOLD_STEP_HOURS = 0.5
+"""A trip may wait up to this long, in these steps, for a crew member who is not yet free."""
 SEATS_PER_CABIN_CREW = 50
 REACH_ROUNDING_MINUTES = 5
 
@@ -127,6 +132,8 @@ class Option:
             return f"Assign {who} in command (command-qualified, {self.experience_years} years)"
         if self.strategy is Strategy.RIGHT_SEAT:
             return f"Assign {who} in the right seat"
+        if self.strategy is Strategy.DELAY:
+            return f"Delay first departure {self.delay_hours:g}h and assign {who}"
         if self.strategy is Strategy.POSITIONING:
             return f"Assign {who}, positioning from {self.base} (first departure ~{self.delay_hours:g}h late)"
         return f"Assign {who} ({self.strategy.label.lower()})"
@@ -184,6 +191,8 @@ class OptionsResult:
     funnel: tuple[FunnelStage, ...]
     assessments: dict[str, Assessment] = field(default_factory=dict)
     policies: dict[str, Option] = field(default_factory=dict)
+    delay_checked: bool = False
+    """True when holding the trip was tried; with no DELAY option, no hold helped."""
 
     @property
     def crew_options(self) -> tuple[Option, ...]:
@@ -216,6 +225,8 @@ class OptionsResult:
             "funnel": [asdict(s) for s in self.funnel],
             "cancellation_multiple": self.cancellation_multiple,
             "policies": {k: o.crew_id for k, o in self.policies.items()},
+            "delay_checked": self.delay_checked,
+            "max_hold_hours": MAX_HOLD_HOURS,
         }
 
 
@@ -382,6 +393,48 @@ def find_options(
             )
         )
 
+    # Delay: could holding the first departure make someone ruled out legal (still resting,
+    # on call later, not yet in position)? Offer the cheapest such hold, after every crew option.
+    delay_checked = not delay_hours
+    if delay_checked:
+        best_hold = None
+        for a in illegal:
+            if _stage(a) not in ("in position", "rested"):
+                continue
+            cand = cands[a.crew_id]
+            steps = int(MAX_HOLD_HOURS / HOLD_STEP_HOURS)
+            for i in range(1, steps + 1):
+                hold = i * HOLD_STEP_HOURS
+                held = assess_candidate(ctx, cand, pairing, hold_hours=hold)
+                if held.legal:
+                    cost, _, _, _, breakdown, _ = row(held, cand, Strategy.DELAY)
+                    breakdown["delay"] = round(hold * costs.delay_cost_per_duty_hour)
+                    total = sum(breakdown.values())
+                    if best_hold is None or (total, hold) < (best_hold[0], best_hold[1]):
+                        best_hold = (total, hold, held, cand, breakdown)
+                    break
+        if best_hold:
+            total, hold, held, cand, breakdown = best_hold
+            options.append(
+                Option(
+                    rank=len(options) + 1,
+                    strategy=Strategy.DELAY,
+                    crew_id=cand.state.crew_id,
+                    name=cand.state.name,
+                    crew_rank=cand.state.rank,
+                    base=cand.state.base,
+                    cost_inr=total,
+                    cost_breakdown=breakdown,
+                    delay_hours=hold,
+                    reach_minutes=cand.reach_minutes,
+                    seniority=cand.seniority,
+                    risk_score=cand.risk,
+                    resilience=resilience(held, cand),
+                    experience_years=cand.experience_years,
+                )
+            )
+            all_assessed[cand.state.crew_id] = held
+
     if role == "Cabin Crew" and _may_operate_short(graph, pairing, dates, flights["seats"]):
         options.append(
             Option(len(options) + 1, Strategy.SHORT_CREW, None, "Operate one cabin crew short", None, None, 0, {}, 0.0)
@@ -438,6 +491,7 @@ def find_options(
         funnel=tuple(funnel),
         assessments=all_assessed,
         policies=policies,
+        delay_checked=delay_checked,
     )
 
 

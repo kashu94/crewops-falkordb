@@ -139,3 +139,17 @@ def test_a_plan_must_change_something(fresh):
     d = _sick_captain(g)
     with pytest.raises(PlanError, match="nothing to plan"):
         submit(g, d, "ananya.iyer", assignments=[])
+
+
+def test_approved_hold_moves_the_trips_departures(fresh):
+    g = fresh.ops
+    d = report(g, "certification_lapse", {"crew_id": "C-5417", "from_date": "2026-10-16"}, "imran.sheikh")
+    gap = analyse(g, d)["gaps"][0]["gap"]
+    desk = get(g, d)["desk"]
+    controller = run(g, "ctl", "MATCH (u:User)-[:STAFFS]->(:Desk {id: $d}) RETURN u.username AS u", {"d": desk})[0]["u"]
+    before = run(g, "dep", "MATCH (f:Flight {id: 'DX421-2026-10-17'}) RETURN f.dep_ts AS t")[0]["t"]
+    plan = submit(g, d, controller, assignments=[{"gap": gap, "crew_id": "C-1329"}])
+    assert plan["assignments"][0]["strategy"] == "delay_departure"
+    approve(g, plan["plan_id"], "meera.bhatt")
+    after = run(g, "dep", "MATCH (f:Flight {id: 'DX421-2026-10-17'}) RETURN f.dep_ts AS t, f.delay_minutes AS m")[0]
+    assert after == {"t": before + 2 * 3600, "m": 120}

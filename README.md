@@ -23,7 +23,8 @@ can show the Cypher queries it came from.
 - **Desk assignment.** Each analysed disruption goes to the controller desk with the fewest open
   disruptions (ties: fewest in total, then desk order), so work spreads evenly.
 - **Four-eyes approval.** A controller picks an option for each seat (any legal crew member,
-  operating one short, or cancelling, which asks for confirmation) and submits the plan. A
+  holding the departure up to 4h for someone not yet free, operating one short, or cancelling,
+  which asks for confirmation) and submits the plan. A
   different user approves it, and the roster change is committed in one Cypher query.
 - **Delays.** A delay follows the aircraft rotation; legs that push a duty past its limit are
   proposed for cancellation, and crew the delay makes illegal become seats to re-crew.
@@ -264,7 +265,7 @@ docker run --rm -p 8000:8000 crewops-allinone      # http://localhost:8000
 ## Tests
 
 ```bash
-uv run pytest       # 84 tests, needs FalkorDB running
+uv run pytest       # 88 tests, needs FalkorDB running
 uv run ruff check .
 ```
 

@@ -68,3 +68,21 @@ def test_crew_schedule_lists_flights_and_is_private_to_crew(loaded):
     crew = Caller.load(loaded, "c1042.nair")
     assert tools.call(loaded, crew, "crew_schedule", {"crew": "C-1042"})["ok"]
     assert not tools.call(loaded, crew, "crew_schedule", {"crew": "C-3310"})["ok"]
+
+
+def test_schedule_explains_a_handed_over_trip(fresh):
+    from crewops.disruptions import analyse, report
+    from crewops.plans import approve, submit
+
+    g = fresh.ops
+    d = report(g, "crew_unavailable", {"crew_id": "C-1042", "from_date": "2026-10-13"}, "imran.sheikh")
+    analyse(g, d)
+    approve(g, submit(g, d, "ananya.iyer")["plan_id"], "meera.bhatt")
+    crew = Caller.load(fresh, "c1042.nair")
+    out = tools.call(fresh, crew, "crew_schedule", {"crew": "C-1042"})
+    assert out["ok"], out
+    sched = out["result"]
+    assert sched["duty_days"] == []
+    assert sched["handed_over"] == [
+        {"pairing": "P-2291", "plan": "PL-0001", "covered_by": "C-3310", "covered_by_name": "D. Reddy"}
+    ]
