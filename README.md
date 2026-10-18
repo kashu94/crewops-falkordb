@@ -20,8 +20,13 @@ can show the Cypher queries it came from.
 - **Legal cover, ranked by cost.** All seven duty rules are checked (duty period, 7-day and
   28-day limits, rest, rating, certificates, base). Crew who fail are listed with the rule
   they break.
-- **Four-eyes approval.** A controller submits a plan, a different user approves it, and
-  the roster change is committed in one Cypher query.
+- **Desk assignment.** Each analysed disruption goes to the controller desk with the fewest open
+  disruptions (ties: fewest in total, then desk order), so work spreads evenly.
+- **Four-eyes approval.** A controller picks an option for each seat (any legal crew member,
+  operating one short, or cancelling, which asks for confirmation) and submits the plan. A
+  different user approves it, and the roster change is committed in one Cypher query.
+- **Delays.** A delay follows the aircraft rotation; legs that push a duty past its limit are
+  proposed for cancellation, and crew the delay makes illegal become seats to re-crew.
 - **Explanations.** Decision trail, "why not this crew member?", and a view of the
   disruption's subgraph.
 - **Agents that coordinate through the graph.** Triage agents claim disruptions atomically
@@ -259,7 +264,7 @@ docker run --rm -p 8000:8000 crewops-allinone      # http://localhost:8000
 ## Tests
 
 ```bash
-uv run pytest       # 78 tests, needs FalkorDB running
+uv run pytest       # 84 tests, needs FalkorDB running
 uv run ruff check .
 ```
 

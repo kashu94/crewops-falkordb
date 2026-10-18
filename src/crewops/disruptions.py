@@ -21,7 +21,7 @@ from crewops.impact import (
     station_closure,
     who_to_tell,
 )
-from crewops.legality import OPEN_STATUSES, Context, UnknownEntity
+from crewops.legality import OPEN_STATUSES, Context, UnknownEntity, assess
 from crewops.options import AlreadyStarted, OptionsResult, find_options, load_costs
 from crewops.timeutil import add_days, day_of, iso, ts
 
@@ -372,81 +372,25 @@ def _analyse_crew(graph: Graph, d: dict[str, Any], ctx: Context) -> dict[str, An
             except AlreadyStarted as exc:
                 skipped.append(str(exc))
                 continue
-            fallbacks = [o.as_dict() for o in result.options if o.crew_id is None]
-            run(
-                graph,
-                "create_gap",
-                CREATE_GAP,
-                {
-                    "id": d["id"],
-                    "pairing": seat.pairing_id,
-                    "vacated": crew_id,
-                    "gap": gap_id,
-                    "role": seat.role,
-                    "dates": list(seat.dates),
-                    "passengers": seat.passengers,
-                    "fallbacks": json.dumps(fallbacks),
-                    "funnel": json.dumps(result.as_dict()["funnel"]),
-                },
-            )
-            run(graph, "link_uncovered", LINK_FLIGHTS, {"id": d["id"], "rows": [{"flight": f} for f in seat.uncovered]})
-            if seat.at_risk:
-                run(graph, "link_at_risk", LINK_AT_RISK, {"id": d["id"], "flights": list(seat.at_risk)})
-            run(
-                graph,
-                "write_options",
-                WRITE_OPTIONS,
-                {
-                    "gap": gap_id,
-                    "rows": [
-                        {
-                            "crew": o.crew_id,
-                            "rank": o.rank,
-                            "strategy": o.strategy.value,
-                            "cost": o.cost_inr,
-                            "delay": o.delay_hours,
-                            "action": o.action,
-                            "breakdown": json.dumps(o.cost_breakdown),
-                            "resilience": o.resilience,
-                        }
-                        for o in result.crew_options[:OPTIONS_KEPT]
-                    ],
-                },
-            )
-            run(
-                graph,
-                "write_exclusions",
-                WRITE_EXCLUSIONS,
-                {
-                    "gap": gap_id,
-                    "rows": [
-                        {"crew": e.crew_id, "stage": e.stage, "reasons": list(e.reasons), "rules": list(e.rule_ids)}
-                        for e in result.excluded
-                    ],
-                },
+            gaps.append(
+                _write_gap(
+                    graph,
+                    d["id"],
+                    gap_id,
+                    seat.pairing_id,
+                    seat.role,
+                    crew_id,
+                    list(seat.dates),
+                    seat.passengers,
+                    list(seat.uncovered),
+                    list(seat.at_risk),
+                    result,
+                )
             )
             results.append((gap_id, result))
             pairings.append(seat.pairing_id)
             aircraft.append(seat.aircraft)
             flights += seat.uncovered
-            rec = result.recommended
-            gaps.append(
-                {
-                    "gap": gap_id,
-                    "pairing_id": seat.pairing_id,
-                    "role": seat.role,
-                    "vacated_by": crew_id,
-                    "dates": list(seat.dates),
-                    "uncovered_flights": list(seat.uncovered),
-                    "at_risk_flights": list(seat.at_risk),
-                    "passengers": seat.passengers,
-                    "recommended": rec.as_dict() if rec else None,
-                    "options": [o.as_dict() for o in result.options[:OPTIONS_KEPT]]
-                    + ([result.cancellation.as_dict()] if len(result.options) > OPTIONS_KEPT else []),
-                    "excluded_count": len(result.excluded),
-                    "funnel": result.as_dict()["funnel"],
-                }
-            )
     joint = _joint_plan(results) if len(results) > 1 else None
     contention = run(graph, "contention", CONTENTION_QUERY, {"id": d["id"], "open": OPEN_STATUSES}, read_only=True)
     audience = who_to_tell(
@@ -479,6 +423,128 @@ def _analyse_crew(graph: Graph, d: dict[str, Any], ctx: Context) -> dict[str, An
         "_notify": audience,
         "_aircraft": sorted(set(aircraft)),
     }
+
+
+def _write_gap(
+    graph: Graph,
+    disruption_id: str,
+    gap_id: str,
+    pairing: str,
+    role: str,
+    vacated: str,
+    dates: list[str],
+    passengers: int,
+    uncovered: list[str],
+    at_risk: list[str],
+    result: OptionsResult,
+) -> dict[str, Any]:
+    """Write one empty seat with its ranked options and exclusions; return its summary."""
+    fallbacks = [o.as_dict() for o in result.options if o.crew_id is None]
+    run(
+        graph,
+        "create_gap",
+        CREATE_GAP,
+        {
+            "id": disruption_id,
+            "pairing": pairing,
+            "vacated": vacated,
+            "gap": gap_id,
+            "role": role,
+            "dates": dates,
+            "passengers": passengers,
+            "fallbacks": json.dumps(fallbacks),
+            "funnel": json.dumps(result.as_dict()["funnel"]),
+        },
+    )
+    if uncovered:
+        run(graph, "link_uncovered", LINK_FLIGHTS, {"id": disruption_id, "rows": [{"flight": f} for f in uncovered]})
+    if at_risk:
+        run(graph, "link_at_risk", LINK_AT_RISK, {"id": disruption_id, "flights": at_risk})
+    run(
+        graph,
+        "write_options",
+        WRITE_OPTIONS,
+        {
+            "gap": gap_id,
+            "rows": [
+                {
+                    "crew": o.crew_id,
+                    "rank": o.rank,
+                    "strategy": o.strategy.value,
+                    "cost": o.cost_inr,
+                    "delay": o.delay_hours,
+                    "action": o.action,
+                    "breakdown": json.dumps(o.cost_breakdown),
+                    "resilience": o.resilience,
+                }
+                for o in result.crew_options[:OPTIONS_KEPT]
+            ],
+        },
+    )
+    run(
+        graph,
+        "write_exclusions",
+        WRITE_EXCLUSIONS,
+        {
+            "gap": gap_id,
+            "rows": [
+                {"crew": e.crew_id, "stage": e.stage, "reasons": list(e.reasons), "rules": list(e.rule_ids)}
+                for e in result.excluded
+            ],
+        },
+    )
+    rec = result.recommended
+    return {
+        "gap": gap_id,
+        "pairing_id": pairing,
+        "role": role,
+        "vacated_by": vacated,
+        "dates": dates,
+        "uncovered_flights": uncovered,
+        "at_risk_flights": at_risk,
+        "passengers": passengers,
+        "recommended": rec.as_dict() if rec else None,
+        "options": [o.as_dict() for o in result.options[:OPTIONS_KEPT]]
+        + ([result.cancellation.as_dict()] if len(result.options) > OPTIONS_KEPT else []),
+        "excluded_count": len(result.excluded),
+        "funnel": result.as_dict()["funnel"],
+    }
+
+
+def _recrew_after_delay(graph: Graph, d: dict[str, Any], effects, legs_by_date, ctx: Context):
+    """Crew a delay makes illegal (when the day itself stays within its limit) become seats
+    to re-crew; days that break the limit for anyone propose cancelling their trailing legs."""
+    gaps: list[dict[str, Any]] = []
+    results: list[tuple[str, OptionsResult]] = []
+    cancels: list[dict[str, str]] = []
+    for e in effects:
+        if e.breach:
+            cancels += [{"flight": f, "pairing": e.pairing_id, "date": e.date} for f in e.legs_to_drop]
+            continue
+        if e.delay_hours <= 0:
+            continue
+        for c in e.crew:
+            try:
+                before = assess(graph, c["crew"], e.pairing_id, ctx=ctx)
+                after = assess(graph, c["crew"], e.pairing_id, e.delay_hours, e.date, ctx=ctx)
+            except (ValueError, LookupError):
+                continue
+            if not before.legal or after.legal:
+                continue
+            try:
+                result = find_options(graph, e.pairing_id, c["role"], e.delay_hours, e.date, ctx=ctx)
+            except AlreadyStarted:
+                continue
+            gap_id = f"{d['id']}/{e.pairing_id}/{c['crew']}"
+            uncovered = legs_by_date.get(e.date, [])
+            gaps.append(
+                _write_gap(
+                    graph, d["id"], gap_id, e.pairing_id, c["role"], c["crew"], [e.date], 0, uncovered, [], result
+                )
+                | {"reason": after.blocking[0].detail}
+            )
+            results.append((gap_id, result))
+    return gaps, results, cancels
 
 
 def _write_delays(graph: Graph, disruption_id: str, delays: list[dict[str, Any]], breaches: list[Any]) -> None:
@@ -527,27 +593,38 @@ def _analyse_delay(graph: Graph, d: dict[str, Any], ctx: Context) -> dict[str, A
         )
     ]
     audience = who_to_tell(graph, d["type"], flights, pairings, aircraft)
-    if breaches:
-        parts = [
-            f"{b.pairing_id} on {b.date}: FDP {b.fdp_hours}h exceeds {b.fdp_limit}h; "
+    legs_by_date: dict[str, list[str]] = {}
+    for leg in effect.legs:
+        legs_by_date.setdefault(leg.date, []).append(leg.flight_id)
+    gaps, results, cancels = _recrew_after_delay(graph, d, effect.duty_days, legs_by_date, ctx)
+    cancel_cost = len(cancels) * costs.cancellation_per_flight
+    parts = []
+    for b in breaches:
+        parts.append(
+            f"{b.pairing_id} on {b.date}: duty becomes {b.fdp_hours}h against a {b.fdp_limit}h limit, "
             + (
-                f"take {', '.join(b.legs_to_drop)} off this crew (FDP then {b.fdp_after_drop}h) and re-crew or cancel it"
+                f"so {', '.join(f.split('-')[0] for f in b.legs_to_drop)} must come off this crew "
+                f"(duty then {b.fdp_after_drop}h). Plan: cancel it or re-crew it."
                 if b.legs_to_drop
-                else "no leg can be dropped to make it legal"
+                else "and no leg can be dropped to fix it."
             )
-            for b in breaches
-        ]
-        headline = f"Delay ripples to {len(effect.legs)} legs, {effect.passengers_delayed} passengers. " + " ".join(
-            parts
         )
-    else:
-        headline = (
-            f"Delay ripples to {len(effect.legs)} legs ({effect.passengers_delayed} passengers); "
-            "every crew duty stays within its limit."
+    for g in gaps:
+        rec = g["recommended"]
+        parts.append(
+            f"{g['vacated_by']} ({g['role']}, {g['pairing_id']}) becomes illegal: {g['reason']}. "
+            + (f"Cover: {rec['name']} ({rec['crew_id']}), INR {rec['cost_inr']:,}." if rec else "No legal cover.")
         )
+    if not parts:
+        parts.append("Every crew duty stays within its limits, so no plan is needed.")
+    headline = f"Delay carries to {len(effect.legs)} legs ({effect.passengers_delayed} passengers). " + " ".join(parts)
     return {
         "headline": headline,
         "delay": effect.as_dict(),
+        "gaps": gaps,
+        "joint_plan": _joint_plan(results) if len(results) > 1 else None,
+        "proposed_cancellations": cancels,
+        "cancellation_cost_inr": cancel_cost,
         "audience": audience.as_dict(),
         "_notify": audience,
         "_aircraft": aircraft,
@@ -586,6 +663,12 @@ def _analyse_station(graph: Graph, d: dict[str, Any], ctx: Context) -> dict[str,
         }
         for i in impacts
     ]
+    seen_days: set[str] = set()
+    cancels: list[dict[str, str]] = []
+    for b in breaches:
+        if b.duty_day not in seen_days:
+            seen_days.add(b.duty_day)
+            cancels += [{"flight": f, "pairing": b.pairing_id, "date": b.date} for f in b.legs_to_drop]
     headline = (
         f"{len(impacts)} movements at {det['station'].upper()} fall in the closure; "
         f"{sum(i.booked for i in impacts)} passengers. {len(breaches)} crew duty days would breach FDP."

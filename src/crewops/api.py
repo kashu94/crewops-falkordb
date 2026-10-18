@@ -208,12 +208,26 @@ def triage_now(crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
 
 class PlanBody(BaseModel):
     note: str | None = None
+    assignments: list[dict[str, str]] | None = None
+    cancel_flights: list[str] | None = None
+    cancel_pairings: list[str] | None = None
+    short_gaps: list[str] | None = None
 
 
 @app.post("/api/disruptions/{disruption_id}/plan")
 def submit_plan(disruption_id: str, body: PlanBody, crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     caller = _caller(crewops_user)
-    return _guard(plans.submit, graphs().ops, disruption_id, caller.username, note=body.note or "")
+    return _guard(
+        plans.submit,
+        graphs().ops,
+        disruption_id,
+        caller.username,
+        assignments=body.assignments,
+        cancel_flights=body.cancel_flights,
+        note=body.note or "",
+        cancel_pairings=body.cancel_pairings,
+        short_gaps=body.short_gaps,
+    )
 
 
 @app.post("/api/disruptions/{disruption_id}/close")
@@ -309,3 +323,34 @@ def summary(crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
 def call_tool(name: str, body: dict[str, Any], crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
     caller = _caller(crewops_user)
     return registry.call(graphs(), caller, name, body)
+
+
+FORM_OPTIONS = """
+MATCH (c:Crew)-[:EMPLOYED_BY]->(al:Airline), (c)-[:BASED_AT]->(b:Station)
+WITH c, al, b ORDER BY c.id
+WITH collect({id: c.id, name: c.name, rank: c.rank, airline: al.code, base: b.code}) AS crew
+MATCH (f:Flight)-[:FROM]->(o:Station), (f)-[:TO]->(t:Station)
+WITH crew, f, o, t ORDER BY f.dep_ts
+WITH crew, collect({id: f.id, no: f.no, date: f.date, from: o.code, to: t.code, dep_ts: f.dep_ts}) AS flights
+MATCH (g:Gate)-[:AT]->(s:Station)
+WITH crew, flights, g, s ORDER BY s.code, g.id
+WITH crew, flights, collect({id: g.id, station: s.code, emergency: g.emergency}) AS gates
+MATCH (a:Aircraft)-[:OPERATED_BY]->(al:Airline)
+WITH crew, flights, gates, a, al ORDER BY a.tail
+RETURN crew, flights, gates, collect({tail: a.tail, type: a.type, airline: al.code}) AS aircraft
+"""
+
+
+@app.get("/api/form-options")
+def form_options(crewops_user: str | None = Depends(signed_in)) -> dict[str, Any]:
+    """Choices for the report form: crew, flights, gates, aircraft, stations and the week."""
+    _caller(crewops_user)
+    from crewops.timeutil import hhmm
+
+    g = graphs().ops
+    row = run(g, "form_options", FORM_OPTIONS, read_only=True)[0]
+    for f in row["flights"]:
+        f["departs"] = hhmm(f.pop("dep_ts"))
+    dates = sorted({f["date"] for f in row["flights"]})
+    stations = sorted({f["from"] for f in row["flights"]} | {f["to"] for f in row["flights"]})
+    return row | {"stations": stations, "first_date": dates[0], "last_date": dates[-1]}

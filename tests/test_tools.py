@@ -56,3 +56,15 @@ def test_mcp_server_exposes_the_callers_tools(loaded):
 
     result = asyncio.run(go())
     assert '"legal": true' in result.content[0].text
+
+
+def test_crew_schedule_lists_flights_and_is_private_to_crew(loaded):
+    reporter = Caller.load(loaded, "imran.sheikh")
+    out = tools.call(loaded, reporter, "crew_schedule", {"crew": "C-1042"})
+    day = out["result"]["duty_days"][0]
+    assert (day["date"], day["pairing"], day["report"]) == ("2026-10-13", "P-2291", "06:00")
+    assert [f["flight"] for f in day["flights"]] == ["KS412", "KS413", "KS588"]
+    assert day["flights"][0]["from"] == "BLR" and day["flights"][0]["gate"]
+    crew = Caller.load(loaded, "c1042.nair")
+    assert tools.call(loaded, crew, "crew_schedule", {"crew": "C-1042"})["ok"]
+    assert not tools.call(loaded, crew, "crew_schedule", {"crew": "C-3310"})["ok"]

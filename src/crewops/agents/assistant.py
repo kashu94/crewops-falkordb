@@ -486,6 +486,15 @@ class Assistant:
             out = self._call(calls, "get_disruption", {"disruption_id": disruption})
             return done(_render_disruption(out["result"]) if out["ok"] else out["result"]["error"], "disruption")
 
+        if re.search(r"\b(schedule|roster|next flight|my flights?|when do i fly|flying)\b", q):
+            target = refs.get("crew") or self.caller.crew_id
+            if target:
+                out = self._call(calls, "crew_schedule", {"crew": target})
+                if out["ok"] and "duty_days" in out["result"]:
+                    self._focus.append({"kind": "crew", "ref": out["result"]["crew_id"]})
+                    return done(_render_schedule(out["result"]), "schedule")
+                return done(out["result"].get("error") or "Name the crew member by id.", "schedule")
+
         if refs.get("crew") or re.search(r"\bwho is\b", q):
             target = refs.get("crew") or q.split("who is", 1)[-1].strip(" ?")
             out = self._call(calls, "crew_profile", {"crew": target})
@@ -709,6 +718,30 @@ def _render_recipients(r: dict[str, Any]) -> str:
         text += f", and the {len(crew)} crew on the trip"
     sent = sum(1 for x in rec if x["sent"])
     return text + f". {sent} of {len(rec)} notices delivered."
+
+
+def _render_schedule(r: dict[str, Any]) -> str:
+    days = r["duty_days"]
+    if not days:
+        text = f"{r['name']} ({r['crew_id']}) has no rostered flights this week."
+    else:
+        first = days[0]
+        legs = ", ".join(f"{f['flight']} {f['from']}-{f['to']} {f['departs']}" for f in first["flights"])
+        text = (
+            f"{r['name']} ({r['crew_id']}): next duty {first['date']} on {first['pairing']} as {first['role']}, "
+            f"report {first['report']} UTC: {legs}."
+        )
+        if len(days) > 1:
+            text += (
+                " Then "
+                + "; ".join(f"{d['date']} {d['pairing']} ({len(d['flights'])} flights)" for d in days[1:4])
+                + "."
+            )
+    if r["reserve"]:
+        text += f" On reserve {len(r['reserve'])} days at {r['reserve'][0]['base']}."
+    if r["grounded_by"]:
+        text += f" Currently marked unavailable ({', '.join(r['grounded_by'])})."
+    return text
 
 
 def _render_profile(r: dict[str, Any]) -> str:

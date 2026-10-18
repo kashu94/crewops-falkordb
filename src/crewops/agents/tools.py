@@ -218,6 +218,70 @@ def _crew_profile(gs, caller, crew):
     return profile
 
 
+SCHEDULE_LEGS = """
+MATCH (c:Crew {id: $id})-[a:ASSIGNED]->(p:Pairing)-[:HAS_DAY]->(d:DutyDay)-[l:LEG]->(f:Flight)
+MATCH (f)-[:FROM]->(o:Station), (f)-[:TO]->(t:Station), (f)-[:ON]->(ac:Aircraft)
+OPTIONAL MATCH (f)-[:BOARDS_AT]->(g:Gate)
+RETURN d.date AS date, p.id AS pairing, a.role AS role, a.via_plan AS via_plan,
+       d.report_ts AS report_ts, d.release_ts AS release_ts, l.seq AS seq,
+       f.id AS flight_id, f.no AS flight_no, o.code AS origin, t.code AS dest,
+       f.dep_ts AS dep_ts, f.arr_ts AS arr_ts, f.status AS status, ac.tail AS aircraft, g.id AS gate
+ORDER BY dep_ts
+"""
+
+SCHEDULE_RESERVE = """
+MATCH (c:Crew {id: $id})-[oc:ON_CALL]->(s:Station)
+RETURN oc.date AS date, oc.start_ts AS start_ts, oc.end_ts AS end_ts, s.code AS base
+ORDER BY date
+"""
+
+
+def _crew_schedule(gs, caller, crew):
+    from crewops.timeutil import hhmm
+
+    profile = _crew_profile(gs, caller, crew)
+    if "matches" in profile:
+        return profile
+    cid = profile["crew_id"]
+    days: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in run(gs.ops, "schedule_legs", SCHEDULE_LEGS, {"id": cid}, read_only=True):
+        day = days.setdefault(
+            (r["date"], r["pairing"]),
+            {
+                "date": r["date"],
+                "pairing": r["pairing"],
+                "role": r["role"],
+                "via_plan": r["via_plan"],
+                "report": hhmm(r["report_ts"]),
+                "release": hhmm(r["release_ts"]),
+                "duty_hours": round((r["release_ts"] - r["report_ts"]) / 3600, 2),
+                "flights": [],
+            },
+        )
+        day["flights"].append(
+            {
+                "flight": r["flight_no"],
+                "flight_id": r["flight_id"],
+                "from": r["origin"],
+                "to": r["dest"],
+                "departs": hhmm(r["dep_ts"]),
+                "arrives": hhmm(r["arr_ts"]),
+                "aircraft": r["aircraft"],
+                "gate": r["gate"],
+                "status": r["status"],
+            }
+        )
+    reserve = [
+        {"date": r["date"], "window": f"{hhmm(r['start_ts'])}-{hhmm(r['end_ts'])}", "base": r["base"]}
+        for r in run(gs.ops, "schedule_reserve", SCHEDULE_RESERVE, {"id": cid}, read_only=True)
+    ]
+    keep = ("crew_id", "name", "rank", "status", "base", "airline", "ratings", "grounded_by")
+    return {k: profile[k] for k in keep} | {
+        "duty_days": sorted(days.values(), key=lambda d: d["date"]),
+        "reserve": reserve,
+    }
+
+
 RESERVES = """
 MATCH (c:Crew)-[oc:ON_CALL]->(s:Station)
 WHERE oc.date = $date AND ($base IS NULL OR s.code = $base) AND ($rank IS NULL OR c.rank = $rank)
@@ -424,6 +488,14 @@ TOOLS: tuple[Tool, ...] = (
         "Everyone the disruption notifies: station and network contacts, crew on the trip.",
         (D,),
         _who_to_tell,
+    ),
+    Tool(
+        "crew_schedule",
+        "A crew member's schedule: each duty day with report and release times and every flight "
+        "(route, times in UTC, aircraft, gate), plus reserve days. Accepts an id or a name.",
+        (Param("crew", str, "Crew id or name"),),
+        _crew_schedule,
+        roles=frozenset(DESK_ROLES | {"crew"}),
     ),
     Tool(
         "crew_profile",

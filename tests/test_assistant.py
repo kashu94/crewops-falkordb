@@ -136,3 +136,9 @@ def test_rate_limited_model_falls_through_to_the_next(fresh, monkeypatch):
     answer = Assistant(fresh, "ananya.iyer").ask("hello there")
     assert used == ["first", "second"]
     assert answer.engine == "second"
+
+
+def test_crew_can_ask_for_their_next_flight(fresh):
+    answer = Assistant(fresh, "c1042.nair", use_model=False).ask("When is my next flight?")
+    assert answer.text.startswith("A. Nair (C-1042): next duty 2026-10-13 on P-2291")
+    assert "KS412 BLR-BOM 07:00" in answer.text

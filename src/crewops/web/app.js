@@ -24,13 +24,6 @@ async function api(path, options = {}) {
   return data;
 }
 
-function store(key, value) {
-  try { value == null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch { /* private mode */ }
-}
-function stored(key) {
-  try { return localStorage.getItem(key); } catch { return null; }
-}
-
 function toast(text) {
   const el = $("#toast");
   el.textContent = text;
@@ -47,6 +40,7 @@ const ICON = {
   chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/>',
   net: '<circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 11l10-5M7 13l10 5"/>',
   check: '<path d="M20 6L9 17l-5-5"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/>',
 };
 const icon = (name) => `<svg viewBox="0 0 24 24">${ICON[name]}</svg>`;
@@ -89,14 +83,14 @@ const primaryRole = (roles) => ROLE_ORDER.find((r) => roles.includes(r)) || role
 
 const NAV = {
   controller: [["overview", "Overview", "home"], ["desk", "My desk", "inbox"], ["disruptions", "All disruptions", "list"],
-    ["report", "Report", "plus"], ["assistant", "Assistant", "chat"], ["network", "Network", "net"]],
+    ["crew", "Crew schedules", "calendar"], ["report", "Report", "plus"], ["assistant", "Assistant", "chat"], ["network", "Network", "net"]],
   approver: [["overview", "Overview", "home"], ["approvals", "Approvals", "check"], ["disruptions", "All disruptions", "list"],
-    ["assistant", "Assistant", "chat"], ["network", "Network", "net"]],
+    ["crew", "Crew schedules", "calendar"], ["assistant", "Assistant", "chat"], ["network", "Network", "net"]],
   reporter: [["overview", "Overview", "home"], ["report", "Report a disruption", "plus"], ["mine", "My reports", "list"],
-    ["assistant", "Assistant", "chat"]],
-  crew: [["roster", "My roster", "calendar"], ["absence", "Report absence", "plus"], ["assistant", "Assistant", "chat"]],
-  oversight: [["overview", "Overview", "home"], ["disruptions", "Audit trail", "list"], ["network", "Network", "net"],
-    ["assistant", "Assistant", "chat"]],
+    ["crew", "Crew schedules", "calendar"], ["assistant", "Assistant", "chat"]],
+  crew: [["roster", "My schedule", "calendar"], ["absence", "Report absence", "plus"], ["assistant", "Assistant", "chat"]],
+  oversight: [["overview", "Overview", "home"], ["disruptions", "Audit trail", "list"], ["crew", "Crew schedules", "calendar"],
+    ["network", "Network", "net"], ["assistant", "Assistant", "chat"]],
 };
 const navFor = (role) => NAV[role] || NAV.oversight;
 
@@ -108,7 +102,8 @@ const PAGE_TITLE = {
   mine: ["My reports", "Disruptions you reported and where they are now"],
   report: ["Report a disruption", "The triage agent analyses it within a few seconds"],
   absence: ["Report absence", "Tell crew control you cannot fly"],
-  roster: ["My roster", "Your trips, reserve days and notices"],
+  roster: ["My schedule", "Your flights, duty times and reserve days (all times UTC)"],
+  crew: ["Crew schedules", "Look up any crew member's flights and duty days (all times UTC)"],
   assistant: ["Assistant", "Ask about crew, cover, legality, delays and decisions"],
   network: ["Network", "Graph algorithms over the route network, and the rules that exclude crew"],
 };
@@ -123,33 +118,64 @@ const GROUPS = [
   ["oversight", "Oversight", "Auditor and admins: read-only view."],
 ];
 
+const ROLE_ICON = { controller: "inbox", approver: "check", reporter: "plus", crew: "calendar", oversight: "list" };
+
 async function showLanding() {
   username = null;
   me = null;
   $("#app").hidden = true;
   $("#landing").hidden = false;
+  $("#hero-map").innerHTML = routeMap(null, true);
   const [team, health] = await Promise.all([api("/api/team"), api("/api/health").catch(() => ({}))]);
   $("#landing-clock").textContent = fmtIso(health.clock);
-  const groups = GROUPS.map(([key, title, sub]) => {
+  $("#people").innerHTML = GROUPS.map(([key, title, sub]) => {
     const people = team.filter((u) => {
       const r = primaryRole(u.roles);
       return key === "oversight" ? ["auditor", "admin", "super_admin"].includes(r) : r === key;
     });
     if (!people.length) return "";
-    return `<div class="role-group"><h3>${esc(title)}</h3><p>${esc(sub)}</p>
-      ${people.map((u) => `<button class="person" data-user="${esc(u.username)}" type="button">
-        <span class="avatar">${esc(initials(u.name))}</span>
-        <span><span class="who">${esc(u.name)}</span><br><span class="what">${esc(u.desk ? u.desk : ROLE_LABEL[primaryRole(u.roles)])}</span></span>
-      </button>`).join("")}</div>`;
-  });
-  $("#people").innerHTML = groups.join("");
-  document.querySelectorAll(".person").forEach((b) => b.addEventListener("click", () => signIn(b.dataset.user)));
+    return `<div class="role-row">
+      <div class="role-icon">${icon(ROLE_ICON[key])}</div>
+      <div class="role-text"><div class="role-title">${esc(title)}</div><div class="role-sub">${esc(sub)}</div></div>
+      <select aria-label="${esc(title)}" data-role="${key}">
+        ${people.map((u) => `<option value="${esc(u.username)}">${esc(u.name)}${u.desk ? ` (${esc(u.desk)})` : key === "oversight" ? ` (${esc(ROLE_LABEL[primaryRole(u.roles)])})` : ""}</option>`).join("")}
+      </select>
+      <button class="btn" type="button" data-enter="${key}">Enter</button>
+    </div>`;
+  }).join("");
+  document.querySelectorAll("[data-enter]").forEach((b) => b.addEventListener("click", () => {
+    signIn($(`select[data-role="${b.dataset.enter}"]`).value);
+  }));
+}
+
+// Approximate positions on a map of India, 0..100 in each direction.
+const STATION_XY = { DEL: [44, 14], BOM: [20, 52], GOI: [24, 66], BLR: [43, 76], COK: [37, 92], MAA: [57, 78], HYD: [46, 58], CCU: [82, 38] };
+
+function routeMap(stations, animate = false) {
+  const moves = Object.fromEntries((stations || []).map((s) => [s.station, s.movements]));
+  const max = Math.max(...Object.values(moves).filter((v, i, a) => a.length), 1);
+  const hub = STATION_XY.BLR;
+  const spokes = Object.entries(STATION_XY).filter(([k]) => k !== "BLR");
+  const arc = ([x1, y1], [x2, y2]) => {
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, dx = x2 - x1, dy = y2 - y1;
+    return `M${x1},${y1} Q${mx - dy * 0.18},${my + dx * 0.18} ${x2},${y2}`;
+  };
+  const paths = spokes.map(([k, xy], i) => {
+    const w = stations ? 0.4 + (1.6 * (moves[k] || 0)) / max : 0.7;
+    return `<path id="route-${k}" d="${arc(hub, xy)}" class="route" style="stroke-width:${w};animation-delay:${i * 0.25}s"/>`;
+  }).join("");
+  const dots = Object.entries(STATION_XY).map(([k, [x, y]]) => `<g class="station ${k === "BLR" ? "hub" : ""}">
+      ${k === "BLR" ? `<circle cx="${x}" cy="${y}" r="5" class="pulse"/>` : ""}
+      <circle cx="${x}" cy="${y}" r="${k === "BLR" ? 2.6 : 1.6}"/>
+      <text x="${x + (x > 70 ? -3 : 3)}" y="${y - 2.5}" text-anchor="${x > 70 ? "end" : "start"}">${k}${stations && moves[k] ? ` ${moves[k]}` : ""}</text></g>`).join("");
+  const planes = animate ? ["DEL", "CCU", "BOM", "MAA"].map((k, i) => `<g class="plane"><path d="M-2.2,-1.2 L2.4,0 L-2.2,1.2 L-1.2,0 Z"/>
+      <animateMotion dur="${6 + i * 1.5}s" repeatCount="indefinite" rotate="auto" begin="${i * 1.2}s"><mpath href="#route-${k}"/></animateMotion></g>`).join("") : "";
+  return `<svg viewBox="0 0 100 100" class="route-map" role="img" aria-label="Route network from the BLR hub">${paths}${dots}${planes}</svg>`;
 }
 
 async function signIn(name) {
   await api("/api/login", { method: "POST", body: { username: name } });
   username = name;
-  store("crewops.user", name);
   chatLog = [];
   sessionId = null;
   await loadMe();
@@ -209,14 +235,16 @@ const PAGES = {
     else if (me.role === "reporter") waiting = listCard("Your recent reports", (items.my_reports || []).map(fromInbox), "mine");
     el.innerHTML = `
       <div class="tiles">
-        ${tile("Open disruptions", num(s.open), `${num(s.total)} reported in total`)}
-        ${tile("Need a plan", num(s.needs_plan), "analysed, waiting for a controller")}
-        ${tile("Awaiting approval", num(s.awaiting_approval), "submitted, waiting for an approver")}
-        ${tile("Passengers affected", num(s.passengers), "on open disruptions")}
+        ${tile("Open disruptions", num(s.open), `${num(s.total)} reported in total`, "list")}
+        ${tile("Need a plan", num(s.needs_plan), "analysed, waiting for a controller", "inbox")}
+        ${tile("Awaiting approval", num(s.awaiting_approval), "submitted, waiting for an approver", "check")}
+        ${tile("Passengers affected", num(s.passengers), "on open disruptions", "user")}
       </div>
       <div class="grid-cols">
         ${waiting}
         ${listCard("Latest disruptions", all.slice(0, 6), "disruptions")}
+        <div class="card"><div class="card-head"><h3>Route network</h3><span class="muted small">flights per station, from the graph</span></div>
+          <div class="card-body map-card">${routeMap(insights.stations)}</div></div>
         <div class="card"><div class="card-head"><h3>Agents</h3><span class="muted small">coordinating through the graph</span></div>
           ${insights.agents.length ? `<table><thead><tr><th>Agent</th><th>Kind</th><th class="num">Claimed</th><th class="num">Handoffs</th></tr></thead><tbody>
           ${insights.agents.map((a) => `<tr><td>${esc(a.agent)}</td><td>${esc(a.kind)}</td><td class="num">${a.claimed}</td><td class="num">${a.handoffs}</td></tr>`).join("")}
@@ -231,35 +259,53 @@ const PAGES = {
   mine: (el, id) => listDetail(el, id, "mine", () => (me.inbox.items.my_reports || []).map(fromInbox), "You have not reported anything yet."),
   disruptions: (el, id) => listDetail(el, id, "disruptions", () => api("/api/disruptions"), "No disruptions yet."),
 
-  async report(el) { renderReport(el, Object.keys(KINDS)); },
-  async absence(el) { renderReport(el, ["crew_unavailable"], me.crew_id); },
+  async report(el) { await renderReport(el, Object.keys(KINDS)); },
+  async absence(el) { await renderReport(el, ["crew_unavailable"], me.crew_id); },
 
   async roster(el) {
-    const out = await api("/api/tools/crew_profile", { method: "POST", body: { crew: me.crew_id } });
+    const out = await api("/api/tools/crew_schedule", { method: "POST", body: { crew: me.crew_id } });
     if (!out.ok) throw new Error(out.result.error);
     const p = out.result;
     const crew = me.inbox.items.crew || { notices: [], new_trips: [] };
-    el.innerHTML = `
-      <div class="tiles">
-        ${tile("Rank", esc(p.rank), esc(p.airline))}
-        ${tile("Base", esc(p.base), `rated on ${esc(p.ratings.join(", "))}`)}
-        ${tile("Trips", num(new Set(p.duties.map((d) => d.pairing)).size), `${p.duties.length} duty days`)}
-        ${tile("Reserve days", num(p.on_call.length), "status: " + esc(p.status))}
-      </div>
-      <div class="grid-cols">
-        <div class="card"><div class="card-head"><h3>Rostered duties</h3></div>
-          ${p.duties.length ? `<table><thead><tr><th>Date</th><th>Pairing</th><th>Role</th></tr></thead><tbody>
-          ${p.duties.map((d) => `<tr><td>${esc(d.date)}</td><td>${esc(d.pairing)}</td><td>${esc(d.role)}</td></tr>`).join("")}</tbody></table>`
-          : `<div class="empty">No rostered duties.</div>`}
-        </div>
-        <div class="card"><div class="card-head"><h3>Notices</h3></div><div class="card-body">
-          ${p.grounded_by.map((g) => `<div class="notice">You are marked unavailable in <b>${esc(g)}</b>. Crew control is arranging cover for your trips.</div>`).join("")}
-          ${crew.new_trips.map((t) => `<div class="notice">New trip: <b>${esc(t.pairing)}</b> as ${esc(t.role)} (plan ${esc(t.plan)})</div>`).join("")}
-          ${crew.notices.map((n) => `<div class="notice">${esc(n.disruption)}: ${esc(n.summary)}</div>`).join("")}
-          ${!crew.new_trips.length && !crew.notices.length && !p.grounded_by.length ? `<p class="muted">No notices. Your roster is unchanged.</p>` : ""}
-          <div class="actions"><a class="btn secondary" href="#/absence">Report absence</a></div>
-        </div></div>
-      </div>`;
+    const notices = [
+      ...p.grounded_by.map((g) => `<div class="notice">You are marked unavailable in <b>${esc(g)}</b>. Crew control is arranging cover for your trips.</div>`),
+      ...crew.new_trips.map((t) => `<div class="notice">New trip: <b>${esc(t.pairing)}</b> as ${esc(t.role)} (plan ${esc(t.plan)})</div>`),
+      ...crew.notices.map((n) => `<div class="notice">${esc(n.disruption)}: ${esc(n.summary)}</div>`),
+    ];
+    el.innerHTML = scheduleHtml(p) + `
+      <div class="card"><div class="card-head"><h3>Notices</h3><a class="btn secondary" href="#/absence">Report absence</a></div><div class="card-body">
+        ${notices.join("") || `<p class="muted">No notices. Your schedule is unchanged.</p>`}
+      </div></div>`;
+  },
+
+  async crew(el, id) {
+    el.innerHTML = `<div class="card"><div class="card-body">
+        <form id="crew-search" class="ask" style="padding:0;border:0">
+          <input id="crew-q" autocomplete="off" placeholder="Crew id or name, e.g. C-1042 or Pillai" value="${esc(id || "")}">
+          <button class="btn" type="submit">Show schedule</button>
+        </form>
+        <p class="muted small" style="margin-top:8px">Try C-1042 (captain), C-3310 (reserve captain) or C-5417 (cabin crew).</p>
+      </div></div><div id="crew-result"></div>`;
+    $("#crew-search").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const q = $("#crew-q").value.trim();
+      if (q) location.hash = `#/crew/${encodeURIComponent(q)}`;
+    });
+    if (!id) return;
+    const box = $("#crew-result");
+    box.innerHTML = `<div class="card empty">Loading...</div>`;
+    const out = await api("/api/tools/crew_schedule", { method: "POST", body: { crew: id } });
+    if (!out.ok) { box.innerHTML = `<div class="card empty error">${esc(out.result.error)}</div>`; return; }
+    const r = out.result;
+    if (r.matches) {
+      box.innerHTML = r.matches.length ? `<div class="card"><div class="card-head"><h3>${r.matches.length} crew match "${esc(id)}"</h3></div><ul class="rows">
+        ${r.matches.map((m) => `<li class="row" data-go="#/crew/${esc(m.crew_id)}"><div class="row-top"><span class="row-id">${esc(m.crew_id)}</span><span class="chip">${esc(m.rank)}</span></div><div>${esc(m.name)}</div></li>`).join("")}
+        </ul></div>` : `<div class="card empty">No crew match "${esc(id)}".</div>`;
+      bindRows(box);
+      return;
+    }
+    box.innerHTML = `<div class="card"><div class="card-body"><h3 style="font-size:18px">${esc(r.name)} <span class="muted">(${esc(r.crew_id)})</span></h3>
+      <p class="muted small">${esc(r.rank)} - ${esc(r.airline)} - based at ${esc(r.base)}${r.grounded_by.length ? ` - <b>unavailable</b> (${esc(r.grounded_by.join(", "))})` : ""}</p></div></div>` + scheduleHtml(r);
   },
 
   async assistant(el) {
@@ -308,7 +354,39 @@ const PAGES = {
 
 // ---------- shared pieces ----------
 
-const tile = (label, value, sub) => `<div class="card tile"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
+const tile = (label, value, sub, ic = null) => `<div class="card tile">${ic ? `<div class="tile-icon">${icon(ic)}</div>` : ""}<div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
+function scheduleHtml(p) {
+  const trips = new Set(p.duty_days.map((d) => d.pairing)).size;
+  const flights = p.duty_days.reduce((n, d) => n + d.flights.length, 0);
+  const days = p.duty_days.map((d) => `
+    <div class="gap-card">
+      <div class="gap-title">
+        <div><b>${esc(fmtDay(d.date))}</b> <span class="muted">- ${esc(d.pairing)} as ${esc(d.role)}</span>
+          ${d.via_plan ? `<span class="chip">added by ${esc(d.via_plan)}</span>` : ""}</div>
+        <div class="small">Report <b>${esc(d.report)}</b> - Release <b>${esc(d.release)}</b> <span class="muted">(${d.duty_hours}h duty)</span></div>
+      </div>
+      <table><thead><tr><th>Flight</th><th>Route</th><th>Departs</th><th>Arrives</th><th>Aircraft</th><th>Gate</th><th>Status</th></tr></thead><tbody>
+      ${d.flights.map((f) => `<tr><td><b>${esc(f.flight)}</b></td><td>${esc(f.from)} &rarr; ${esc(f.to)}</td><td>${esc(f.departs)}</td><td>${esc(f.arrives)}</td>
+        <td>${esc(f.aircraft)}</td><td>${esc(f.gate || "-")}</td><td>${f.status === "cancelled" ? `<span class="badge REJECTED">Cancelled</span>` : `<span class="muted">Scheduled</span>`}</td></tr>`).join("")}
+      </tbody></table>
+    </div>`).join("");
+  return `
+    <div class="tiles">
+      ${tile("Rank", esc(p.rank), esc(p.airline))}
+      ${tile("Base", esc(p.base), `rated on ${esc(p.ratings.join(", "))}`)}
+      ${tile("Trips", num(trips), `${num(flights)} flights on ${num(p.duty_days.length)} duty days`)}
+      ${tile("Reserve days", num(p.reserve.length), p.reserve.length ? `on call at ${esc(p.reserve[0].base)}` : "not on reserve")}
+    </div>
+    <div class="card"><div class="card-head"><h3>Flights and duty days</h3><span class="muted small">times in UTC</span></div><div class="card-body" style="padding-top:2px">
+      ${days || `<div class="empty">No rostered flights this week.</div>`}
+    </div></div>
+    ${p.reserve.length ? `<div class="card"><div class="card-head"><h3>Reserve (on call)</h3></div>
+      <table><thead><tr><th>Date</th><th>Window (UTC)</th><th>Base</th></tr></thead><tbody>
+      ${p.reserve.map((r) => `<tr><td>${esc(fmtDay(r.date))}</td><td>${esc(r.window)}</td><td>${esc(r.base)}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
+}
+
+const fmtDay = (day) => new Date(day + "T00:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+
 const fromInbox = (d) => ({ id: d.disruption, status: d.status, summary: d.summary });
 const approvalsList = () => (me.inbox.items.approvals || []).map((a) => ({
   id: a.disruption, status: "PLAN_SUBMITTED", summary: `${a.plan} from ${a.submitted_by} - ${inr(a.cost)}` }));
@@ -350,25 +428,47 @@ async function renderDetail(box, id) {
   const plans = d.trail.plans || [];
   const pending = plans.find((p) => p.status === "SUBMITTED");
   const isController = me.roles.includes("controller");
-  const canSubmit = isController && d.status === "OPTIONS_READY" && (!d.desk || d.desk === me.desk);
+  const plannable = (a.gaps || []).length || (a.proposed_cancellations || []).length || (a.gate_moves || []).length;
+  const ownDesk = isController && d.status === "OPTIONS_READY" && (!d.desk || d.desk === me.desk);
+  const canSubmit = ownDesk && plannable;
+  const canClose = ownDesk;
   const canApprove = me.roles.includes("approver") && pending && pending.submitted_by !== me.name;
   let note = "";
   if (isController && d.status === "OPTIONS_READY" && d.desk && d.desk !== me.desk) note = `This disruption belongs to ${esc(d.desk)}. Only that desk can submit a plan.`;
+  if (ownDesk && !plannable) note = "Nothing needs re-crewing or cancelling. Close it once the delay is handled.";
   if (me.roles.includes("approver") && pending && pending.submitted_by === me.name) note = "You submitted this plan, so a different approver must approve it.";
   if (d.status === "REPORTED" || d.status === "ANALYSING") note = "The triage agent is analysing this disruption. Refresh in a few seconds.";
 
+  const jointPick = Object.fromEntries((a.joint_plan ? a.joint_plan.assignments : []).map((x) => [x.gap, x.crew_id]));
   let body = "";
-  for (const g of a.gaps || []) {
-    const opts = g.options.slice(0, 6);
+  (a.gaps || []).forEach((g, gi) => {
+    const opts = g.options.slice(0, 7);
+    const best = opts.find((o) => o.crew_id);
+    const pick = jointPick[g.gap] || (best ? best.crew_id : opts.some((o) => o.strategy === "short_crew") ? "short" : "cancel");
+    const value = (o) => (o.crew_id ? `crew:${o.crew_id}` : o.strategy === "short_crew" ? "short" : "cancel");
+    const isPick = (o) => value(o) === (pick === "short" || pick === "cancel" ? pick : `crew:${pick}`);
     body += `<div class="gap-card">
       <div class="gap-title"><div><b>${esc(g.role)} seat on ${esc(g.pairing_id)}</b>
-        <div class="muted small">Vacated by ${esc(g.vacated_by)} - ${g.uncovered_flights.length} flights - ${num(g.passengers)} passengers</div></div>
+        <div class="muted small">Vacated by ${esc(g.vacated_by)}${g.reason ? ` (${esc(g.reason)})` : ""} - ${g.uncovered_flights.length} flights${g.passengers ? ` - ${num(g.passengers)} passengers` : ""}</div></div>
+        ${canSubmit ? `<span class="muted small">Choose one option</span>` : ""}
       </div>
-      <div class="funnel">${g.funnel.map((s) => `<span class="chip">${esc(s.stage)} <b>${s.remaining}</b>${s.dropped ? ` <span class="muted">(-${s.dropped})</span>` : ""}</span>`).join("")}</div>
-      <table><thead><tr><th>#</th><th>Option</th><th class="num">Cost</th><th class="num">Delay</th></tr></thead><tbody>
-      ${opts.map((o, i) => `<tr class="${i === 0 && o.crew_id ? "best" : ""}"><td>${o.rank}</td><td>${esc(o.action)}${i === 0 && o.crew_id ? `<span class="tag-best">Recommended</span>` : ""}
-        ${o.crew_id && i > 0 ? `<button class="link why" data-crew="${esc(o.crew_id)}" type="button">why not first?</button>` : ""}</td>
+      <div class="funnel">${g.funnel.map((st) => `<span class="chip">${esc(st.stage)} <b>${st.remaining}</b>${st.dropped ? ` <span class="muted">(-${st.dropped})</span>` : ""}</span>`).join("")}</div>
+      <table><thead><tr>${canSubmit ? "<th></th>" : ""}<th>#</th><th>Option</th><th class="num">Cost</th><th class="num">Delay</th></tr></thead><tbody>
+      ${opts.map((o, i) => `<tr class="${o === best ? "best" : ""} ${o.strategy === "cancel" ? "cancel-row" : ""}">
+        ${canSubmit ? `<td class="pick"><input type="radio" name="gap-${gi}" value="${esc(value(o))}" data-gap="${esc(g.gap)}" data-pairing="${esc(g.pairing_id)}"
+          data-cost="${o.cost_inr}" data-label="${esc(o.action)}" data-pax="${g.passengers || 0}" ${isPick(o) ? "checked" : ""} aria-label="Choose option ${o.rank}"></td>` : ""}
+        <td>${o.rank}</td><td>${esc(o.action)}${o === best ? `<span class="tag-best">Recommended</span>` : ""}
+        ${o.crew_id && o !== best ? `<button class="link why" data-crew="${esc(o.crew_id)}" type="button">why not first?</button>` : ""}</td>
         <td class="num">${inr(o.cost_inr)}</td><td class="num">${o.delay_hours ? o.delay_hours + "h" : "-"}</td></tr>`).join("")}
+      </tbody></table></div>`;
+  });
+  if ((a.proposed_cancellations || []).length) {
+    const per = a.cancellation_cost_inr / a.proposed_cancellations.length;
+    body += `<div class="gap-card"><div class="gap-title"><div><b>Legs the crew can no longer fly</b>
+      <div class="muted small">The delay pushes the duty past its legal limit. These legs come off the crew.</div></div></div>
+      <table><thead><tr>${canSubmit ? "<th></th>" : ""}<th>Flight</th><th>Trip</th><th>Date</th><th class="num">If cancelled</th></tr></thead><tbody>
+      ${a.proposed_cancellations.map((c) => `<tr class="cancel-row">${canSubmit ? `<td class="pick"><input type="checkbox" name="cancel-leg" value="${esc(c.flight)}" data-cost="${per}" checked aria-label="Cancel ${esc(c.flight)}"></td>` : ""}
+        <td><b>${esc(c.flight.split("-")[0])}</b></td><td>${esc(c.pairing)}</td><td>${esc(c.date)}</td><td class="num">${inr(per)}</td></tr>`).join("")}
       </tbody></table></div>`;
   }
   if (a.joint_plan) body += `<div class="notice"><b>Joint plan:</b> ${a.joint_plan.assignments.map((x) => esc(x.crew_id)).join(" + ")} for ${inr(a.joint_plan.total_cost_inr)} (nobody gets two seats).</div>`;
@@ -394,7 +494,8 @@ async function renderDetail(box, id) {
       ${body}
       ${note ? `<div class="notice">${note}</div>` : ""}
       <div class="actions">
-        ${canSubmit ? `<button class="btn" id="submit-plan" type="button">${icon("check")} Submit plan for approval</button><button class="btn secondary" id="close-d" type="button">Close without a plan</button>` : ""}
+        ${canSubmit ? `<button class="btn" id="submit-plan" type="button">${icon("check")} Submit plan for approval</button>` : ""}
+        ${canClose ? `<button class="btn secondary" id="close-d" type="button">Close without a plan</button>` : ""}
         ${canApprove ? `<button class="btn" id="approve-plan" type="button">${icon("check")} Approve ${esc(pending.plan)}</button><button class="btn danger" id="reject-plan" type="button">Reject</button>` : ""}
       </div>
       <p id="action-msg" class="small error"></p>
@@ -416,11 +517,82 @@ async function renderDetail(box, id) {
     const o = (r.options || [])[0];
     b.outerHTML = o ? `<div class="muted small">Legal, ranked ${o.rank}. Cheaper: ${o.ranked_above.map((x) => `${esc(x.crew)} (${inr(x.cost)})`).join(", ")}</div>` : "";
   }));
-  act("#submit-plan", () => api(`/api/disruptions/${id}/plan`, { method: "POST", body: {} }), "Plan submitted. An approver will see it in their queue.");
+  act("#submit-plan", () => submitPlan(id, box), "Plan submitted. An approver will see it in their queue.");
   act("#close-d", () => api(`/api/disruptions/${id}/close`, { method: "POST", body: { note: "handled without a plan" } }), "Disruption closed.");
   act("#approve-plan", () => api(`/api/plans/${pending.plan}/approve`, { method: "POST" }), "Approved. The roster was updated in one graph write.");
-  act("#reject-plan", () => api(`/api/plans/${pending.plan}/reject`, { method: "POST", body: { note: prompt("Reason for rejecting?") || "rejected" } }), "Plan rejected and sent back to the desk.");
+  act("#reject-plan", async () => {
+    const reason = await askModal("Reject this plan?", "Tell the controller why, so they can submit a better one.", "Reject plan");
+    if (reason === null) return SKIP;
+    return api(`/api/plans/${pending.plan}/reject`, { method: "POST", body: { note: reason || "rejected" } });
+  }, "Plan rejected and sent back to the desk.");
   drawGraph(id);
+}
+
+const SKIP = Symbol("skip");
+
+async function submitPlan(id, box) {
+  const body = { assignments: [], cancel_pairings: [], short_gaps: [], cancel_flights: [] };
+  const cancels = [];
+  box.querySelectorAll('input[type="radio"]:checked').forEach((r) => {
+    if (r.value.startsWith("crew:")) body.assignments.push({ gap: r.dataset.gap, crew_id: r.value.slice(5) });
+    else if (r.value === "short") body.short_gaps.push(r.dataset.gap);
+    else if (r.value === "cancel") {
+      body.cancel_pairings.push(r.dataset.pairing);
+      cancels.push(`${r.dataset.label} (${inr(Number(r.dataset.cost))}${Number(r.dataset.pax) ? `, ${num(r.dataset.pax)} passengers` : ""})`);
+    }
+  });
+  box.querySelectorAll('input[name="cancel-leg"]:checked').forEach((c) => {
+    body.cancel_flights.push(c.value);
+    cancels.push(`Cancel ${c.value.split("-")[0]} (${inr(Number(c.dataset.cost))})`);
+  });
+  if (cancels.length) {
+    const ok = await confirmModal(
+      "Cancel flights?",
+      `<p>This plan cancels flights. Passengers will need to be rebooked and the cost cannot be recovered.</p>
+       <ul>${cancels.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>
+       <p>An approver still has to approve it before anything changes.</p>`,
+      "Yes, cancel these flights",
+    );
+    if (!ok) return SKIP;
+  }
+  return api(`/api/disruptions/${id}/plan`, { method: "POST", body });
+}
+
+function openModal(html) {
+  const wrap = document.createElement("div");
+  wrap.className = "modal-backdrop";
+  wrap.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}</div>`;
+  document.body.appendChild(wrap);
+  return wrap;
+}
+
+function confirmModal(title, html, yes) {
+  return new Promise((resolve) => {
+    const m = openModal(`<h3>${esc(title)}</h3><div class="modal-body">${html}</div>
+      <div class="actions"><button class="btn secondary" data-a="no" type="button">Go back</button><button class="btn danger-solid" data-a="yes" type="button">${esc(yes)}</button></div>`);
+    m.querySelector('[data-a="no"]').focus();
+    m.addEventListener("click", (e) => {
+      const a = e.target.closest("[data-a]")?.dataset.a || (e.target === m ? "no" : null);
+      if (!a) return;
+      m.remove();
+      resolve(a === "yes");
+    });
+  });
+}
+
+function askModal(title, text, yes) {
+  return new Promise((resolve) => {
+    const m = openModal(`<h3>${esc(title)}</h3><div class="modal-body"><p>${esc(text)}</p><textarea rows="3" placeholder="Reason"></textarea></div>
+      <div class="actions"><button class="btn secondary" data-a="no" type="button">Go back</button><button class="btn danger-solid" data-a="yes" type="button">${esc(yes)}</button></div>`);
+    m.querySelector("textarea").focus();
+    m.addEventListener("click", (e) => {
+      const a = e.target.closest("[data-a]")?.dataset.a || (e.target === m ? "no" : null);
+      if (!a) return;
+      const v = m.querySelector("textarea").value.trim();
+      m.remove();
+      resolve(a === "yes" ? v : null);
+    });
+  });
 }
 
 function act(sel, fn, done) {
@@ -429,7 +601,7 @@ function act(sel, fn, done) {
   el.addEventListener("click", async () => {
     el.disabled = true;
     try {
-      await fn();
+      if ((await fn()) === SKIP) { el.disabled = false; return; }
       toast(done);
       await loadMe();
       route();
@@ -465,30 +637,98 @@ async function drawGraph(id) {
 
 // ---------- report ----------
 
-function renderReport(el, kinds, fixedCrew = null) {
+let formOptions = null;
+
+const REASONS = ["sick", "injury", "family emergency", "fatigue", "other"];
+const CERTS = [["licence", "Licence"], ["medical_class1", "Medical (class 1)"], ["recurrent_training", "Recurrent training"], ["dangerous_goods", "Dangerous goods"]];
+const CAUSES = ["technical", "weather", "air traffic control", "late inbound", "crew", "other"];
+
+async function renderReport(el, kinds, fixedCrew = null) {
+  formOptions = formOptions || (await api("/api/form-options"));
+  const o = formOptions;
+  const day0 = "2026-10-13";
   let kind = kinds[0];
+  const AIRLINES = { DX: "Deccan Express", KS: "Konkan Skyways", NG: "Nilgiri Connect" };
+  const crewOptions = Object.entries(AIRLINES).map(([code, name]) => `<optgroup label="${esc(name)}">${o.crew
+    .filter((c) => c.airline === code)
+    .map((c) => `<option value="${esc(c.id)}">${esc(c.id)} - ${esc(c.name)} (${esc(c.rank)}, ${esc(c.base)})</option>`).join("")}</optgroup>`).join("");
+  const dateInput = (name, value, required = true) =>
+    `<input type="date" name="${name}" min="${o.first_date}" max="${o.last_date}" value="${value || ""}" ${required ? "required" : ""}>`;
+  const dtInput = (name, value) =>
+    `<input type="datetime-local" name="${name}" min="${o.first_date}T00:00" max="${o.last_date}T23:59" value="${value}" required>`;
+  const select = (name, items, placeholder) =>
+    `<select name="${name}" required><option value="">${esc(placeholder)}</option>${items}</select>`;
+  const crewPicker = () => `<select name="crew_id" required><option value="">Choose a crew member</option>${crewOptions}</select>`;
+  const flightsFor = (date) => o.flights.filter((f) => f.date === date)
+    .map((f) => `<option value="${esc(f.id)}">${esc(f.no)} ${esc(f.from)} &rarr; ${esc(f.to)}, departs ${esc(f.departs)} UTC</option>`).join("");
+  const field = (label, control, hint = "") => `<label class="field">${esc(label)}${hint ? ` <span class="hint">${esc(hint)}</span>` : ""}${control}</label>`;
+
+  const FORMS = {
+    crew_unavailable: () => [
+      fixedCrew ? "" : field("Crew member", crewPicker()),
+      field("From", dateInput("from_date", day0)),
+      field("To (optional)", dateInput("to_date", "", false)),
+      field("Reason", select("reason", REASONS.map((r) => `<option ${r === "sick" ? "selected" : ""}>${r}</option>`).join(""), "Choose a reason")),
+    ],
+    certification_lapse: () => [
+      field("Crew member", crewPicker()),
+      field("Grounded from", dateInput("from_date", "2026-10-16")),
+      field("Certificate", select("cert_type", CERTS.map(([v, t]) => `<option value="${v}">${t}</option>`).join(""), "Choose a certificate")),
+    ],
+    flight_delay: () => [
+      field("Date", dateInput("date", "2026-10-14")),
+      field("Flight", select("flight_id", flightsFor("2026-10-14"), "Choose a flight")),
+      field("Delay (hours)", `<input type="number" name="delay_hours" min="0.25" max="12" step="0.25" value="1.5" required>`),
+      field("Cause", select("cause", CAUSES.map((c) => `<option>${c}</option>`).join(""), "Choose a cause")),
+    ],
+    station_closure: () => [
+      field("Station", select("station", o.stations.map((st) => `<option ${st === "BLR" ? "selected" : ""}>${st}</option>`).join(""), "Choose a station")),
+      field("Closed from", dtInput("start", "2026-10-15T08:00"), "(UTC)"),
+      field("Until", dtInput("end", "2026-10-15T14:00"), "(UTC)"),
+    ],
+    gate_closure: () => {
+      const byStation = {};
+      o.gates.forEach((g) => { (byStation[g.station] = byStation[g.station] || []).push(g); });
+      const gates = Object.entries(byStation).map(([st, list]) => `<optgroup label="${st}">${list.map((g) =>
+        `<option value="${esc(g.id)}">${esc(g.id)}${g.emergency ? " (emergency)" : ""}</option>`).join("")}</optgroup>`).join("");
+      return [
+        field("Gate", select("gate", gates, "Choose a gate")),
+        field("Closed from", dtInput("start", "2026-10-13T00:00"), "(UTC)"),
+        field("Until", dtInput("end", "2026-10-13T06:00"), "(UTC)"),
+      ];
+    },
+  };
+
   const draw = () => {
-    const spec = KINDS[kind];
     el.innerHTML = `<div class="card"><div class="card-body">
       ${kinds.length > 1 ? `<div class="kinds">${kinds.map((k) => `<button type="button" class="kind ${k === kind ? "active" : ""}" data-kind="${k}">
         <span class="k-title">${esc(KINDS[k].title)}</span><span class="k-sub">${esc(KINDS[k].sub)}</span></button>`).join("")}</div>` : ""}
       <form id="report-form">
-        <div class="form-grid">
-          ${spec.fields.filter(([name]) => !(fixedCrew && name === "crew_id")).map(([name, label, ph]) => `<label class="field">${esc(label)}
-            <input name="${name}" placeholder="e.g. ${esc(ph)}"></label>`).join("")}
-        </div>
+        <div class="form-grid">${FORMS[kind]().join("")}</div>
         ${fixedCrew ? `<p class="muted small" style="margin-top:10px">Reporting for yourself (${esc(fixedCrew)}).</p>` : ""}
         <div class="actions"><button class="btn" type="submit">${icon("plus")} Report</button></div>
         <p id="report-msg" class="small error"></p>
       </form></div></div>
       <div class="card"><div class="card-body small muted">After you report, the triage agent claims the disruption, finds what it affects in the graph,
-        ranks legal cover, and hands it to the least busy controller desk.</div></div>`;
+        ranks legal cover, and hands it to the controller desk with the fewest open disruptions.</div></div>`;
     el.querySelectorAll(".kind").forEach((b) => b.addEventListener("click", () => { kind = b.dataset.kind; draw(); }));
-    $("#report-form").addEventListener("submit", async (e) => {
+    const form = $("#report-form");
+    const dateField = form.querySelector('input[name="date"]');
+    if (dateField) dateField.addEventListener("change", () => {
+      form.querySelector('select[name="flight_id"]').innerHTML = `<option value="">Choose a flight</option>${flightsFor(dateField.value)}`;
+    });
+    form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const details = {};
-      new FormData(e.target).forEach((val, k) => { if (val) details[k] = k === "delay_hours" ? Number(val) : val; });
+      new FormData(form).forEach((val, k) => { if (val !== "") details[k] = val; });
       if (fixedCrew) details.crew_id = fixedCrew;
+      if (details.crew_id && !o.crew.some((c) => c.id === details.crew_id.toUpperCase())) {
+        $("#report-msg").textContent = "Pick a crew member from the list.";
+        return;
+      }
+      if (details.delay_hours) details.delay_hours = Number(details.delay_hours);
+      for (const k of ["start", "end"]) if (details[k]) details[k] = `${details[k]}:00Z`;
+      if (kind === "flight_delay") delete details.date;
       try {
         const r = await api("/api/disruptions", { method: "POST", body: { kind, details } });
         toast(`${r.id} reported. The triage agent is analysing it.`);
@@ -512,7 +752,7 @@ function suggestionsFor(role) {
       "VT-DXA is 90 minutes late on 14 Oct, delay impact?", "Who is on reserve at BLR tomorrow?", "I prefer least delay from now on"],
     approver: ["Anything waiting for me?", "Explain the decision on D-0001", "Why not C-2087 for D-0001?", ...common],
     reporter: ["Anything waiting for me?", "What is the status of D-0001?", "Who is C-1042?"],
-    crew: ["Anything waiting for me?", `Who is ${me.crew_id}?`],
+    crew: ["Anything waiting for me?", `Who is ${me.crew_id}?`, "When is my next flight?"],
     oversight: ["Explain the decision on D-0001", "Which station is most critical?", "Who is on reserve at BLR tomorrow?"],
   }[role] || common;
 }
@@ -545,16 +785,17 @@ async function ask(question) {
 // ---------- start ----------
 
 $("#switch").addEventListener("click", () => {
-  store("crewops.user", null);
   history.replaceState(null, "", location.pathname);
   showLanding();
 });
 window.addEventListener("hashchange", route);
 
+// Opening the link always starts at the sign-in screen. ?as=<user> signs in directly (for demos).
 (async () => {
-  const wanted = new URLSearchParams(location.search).get("as") || stored("crewops.user");
+  const wanted = new URLSearchParams(location.search).get("as");
   if (wanted) {
-    try { await signIn(wanted); return; } catch { store("crewops.user", null); }
+    try { await signIn(wanted); return; } catch { /* unknown user: show the sign-in screen */ }
   }
+  history.replaceState(null, "", location.pathname);
   showLanding();
 })();

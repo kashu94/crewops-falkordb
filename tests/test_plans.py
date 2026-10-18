@@ -107,3 +107,35 @@ def test_gate_closure_plan_moves_the_flight(fresh):
     approve(g, submit(g, d, controller)["plan_id"], "karan.mehta")
     rows = run(g, "gate", "MATCH (:Flight {id: 'NG451-2026-10-13'})-[:BOARDS_AT]->(x:Gate) RETURN x.id AS gate")
     assert rows == [{"gate": "BLR-E1"}]
+
+
+def test_delay_plan_cancels_the_legs_the_crew_cannot_fly(fresh):
+    g = fresh.ops
+    d = report(g, "flight_delay", {"aircraft": "VT-DXA", "date": "2026-10-14", "delay_hours": 1.5}, "imran.sheikh")
+    result = analyse(g, d)
+    assert [c["flight"] for c in result["proposed_cancellations"]] == ["DX404-2026-10-14"]
+    desk = get(g, d)["desk"]
+    controller = run(g, "ctl", "MATCH (u:User)-[:STAFFS]->(:Desk {id: $d}) RETURN u.username AS u", {"d": desk})[0]["u"]
+    plan = submit(g, d, controller)
+    assert plan["cancel_flights"] == ["DX404-2026-10-14"] and plan["total_cost_inr"] == 250_000
+    approve(g, plan["plan_id"], "meera.bhatt")
+    rows = run(g, "status", "MATCH (f:Flight {id: 'DX404-2026-10-14'}) RETURN f.status AS s")
+    assert rows == [{"s": "cancelled"}]
+
+
+def test_controller_can_choose_another_option_or_cancel(fresh):
+    g = fresh.ops
+    d = _sick_captain(g)
+    gap = f"{d}/P-2291/C-1042"
+    chosen = submit(g, d, "ananya.iyer", assignments=[{"gap": gap, "crew_id": "C-3983"}])
+    assert chosen["assignments"][0]["crew"] == "C-3983" and chosen["total_cost_inr"] == 30660
+    reject(g, chosen["plan_id"], "meera.bhatt", "try cancelling")
+    cancel = submit(g, d, "ananya.iyer", assignments=[], cancel_pairings=["P-2291"])
+    assert len(cancel["cancel_flights"]) == 6 and cancel["total_cost_inr"] == 6 * 250_000
+
+
+def test_a_plan_must_change_something(fresh):
+    g = fresh.ops
+    d = _sick_captain(g)
+    with pytest.raises(PlanError, match="nothing to plan"):
+        submit(g, d, "ananya.iyer", assignments=[])

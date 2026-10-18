@@ -14,17 +14,30 @@
 <body>
   <!-- Sign-in: pick a team member -->
   <section id="landing" class="landing" hidden>
-    <div class="landing-inner">
-      <div class="landing-head">
-        <div class="logo-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><path d="M2 16l20-6-20-6 4 6-4 6zm4-6h8"/></svg>
+    <div class="hero">
+      <div class="hero-inner">
+        <div class="brand hero-brand">
+          <div class="logo-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 16l20-6-20-6 4 6-4 6zm4-6h8"/></svg></div>
+          <div><div class="brand-name">CrewOps</div><div class="brand-sub">on FalkorDB</div></div>
         </div>
-        <h1>CrewOps</h1>
-        <p class="lead">Crew control for three airlines, running on a FalkorDB graph. Sign in as a team member to see their view.</p>
-        <p class="clock-line">Operation clock <span id="landing-clock">-</span></p>
+        <h1>Crew control that follows the connections.</h1>
+        <p class="lead">When a captain calls in sick, CrewOps walks the graph from that one person to every flight,
+          passenger, rule and reserve it touches, ranks legal cover by cost, and needs a second person to approve the change.</p>
+        <ul class="hero-points">
+          <li><span class="dot-ok"></span>Legal cover checked against seven duty rules</li>
+          <li><span class="dot-ok"></span>Agents that coordinate through the graph</li>
+          <li><span class="dot-ok"></span>Every answer shows the Cypher behind it</li>
+        </ul>
+        <div id="hero-map" class="hero-map" aria-hidden="true"></div>
       </div>
-      <div id="people" class="people"></div>
-      <p class="fine">Demo sign-in only. All people, airlines and flights are fictional.</p>
+    </div>
+    <div class="signin">
+      <div class="signin-card">
+        <h2>Sign in</h2>
+        <p class="muted">Pick a team member to see their view. <span id="landing-clock-wrap">Operation clock <b id="landing-clock">-</b>.</span></p>
+        <div id="people" class="people"></div>
+        <p class="fine">Demo sign-in only. All people, airlines and flights are fictional.</p>
+      </div>
     </div>
   </section>
 

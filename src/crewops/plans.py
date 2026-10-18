@@ -55,6 +55,12 @@ OPTIONAL MATCH (f)-[:BOARDS_AT]->(g:Gate)
 RETURN f.id AS flight, f.status AS status, g.id AS gate ORDER BY flight
 """
 
+PAIRING_FLIGHT_IDS = """
+MATCH (p:Pairing)-[:HAS_DAY]->(:DutyDay)-[:LEG]->(f:Flight)
+WHERE p.id IN $pairings
+RETURN collect(f.id) AS ids
+"""
+
 CREATE_PLAN = """
 MATCH (d:Disruption {id: $id}), (u:User {username: $user})
 CREATE (pl:Plan {id: $plan, status: 'SUBMITTED', fingerprint: $fp, total_cost: $cost,
@@ -190,9 +196,13 @@ def submit(
     gate_moves: list[dict[str, str]] | None = None,
     note: str = "",
     now_ts: int | None = None,
+    cancel_pairings: list[str] | None = None,
+    short_gaps: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Submit a plan. Without ``assignments`` the analysis's own choice is used: the joint plan
-    when several seats are open, otherwise each gap's top option."""
+    """Submit a plan. With no choices given, the analysis's own choice is used: the joint plan
+    when several seats are open, otherwise each gap's top option, plus any proposed
+    cancellations. A controller's choices (``assignments``, ``cancel_flights``,
+    ``cancel_pairings``, ``short_gaps``) replace those defaults."""
     ctx = Context.open(graph, now_ts)
     who = user(graph, username)
     d = get(graph, disruption_id)
@@ -204,21 +214,31 @@ def submit(
         raise PlanError(f"{disruption_id} is {d['status']}; a plan needs OPTIONS_READY")
 
     analysis = d.get("analysis") or {}
-    if assignments is None:
+    chosen = any(x is not None for x in (assignments, cancel_flights, cancel_pairings, short_gaps))
+    if not chosen:
         joint = analysis.get("joint_plan")
         if joint:
             assignments = [{"gap": a["gap"], "crew_id": a["crew_id"]} for a in joint["assignments"]]
         else:
             rows = run(graph, "gaps", GAPS_QUERY, {"id": disruption_id}, read_only=True)
             assignments = [{"gap": r["gap"], "crew_id": r["crew"]} for r in rows if r["crew"]]
+        if analysis.get("proposed_cancellations"):
+            cancel_flights = [c["flight"] for c in analysis["proposed_cancellations"]]
+    assignments = assignments or []
+    cancel_flights = list(cancel_flights or [])
+    if cancel_pairings:
+        rows = run(graph, "pairing_flight_ids", PAIRING_FLIGHT_IDS, {"pairings": cancel_pairings}, read_only=True)
+        cancel_flights += rows[0]["ids"] if rows else []
     if gate_moves is None and analysis.get("gate_moves"):
         gate_moves = [
             {"flight": m["flight_id"], "to_gate": m["to_gate"]} for m in analysis["gate_moves"] if m["to_gate"]
         ]
-    cancel_flights = sorted(set(cancel_flights or []))
+    cancel_flights = sorted(set(cancel_flights))
     gate_moves = gate_moves or []
-    if not assignments and not cancel_flights and not gate_moves:
-        raise PlanError("the plan changes nothing")
+    if short_gaps:
+        note = (note + " " if note else "") + "Operate one cabin crew short on: " + ", ".join(short_gaps)
+    if not assignments and not cancel_flights and not gate_moves and not short_gaps:
+        raise PlanError("nothing to plan: no seat to cover, flight to cancel or gate to move; close it instead")
 
     resolved: list[dict[str, Any]] = []
     for a in assignments:
@@ -240,7 +260,9 @@ def submit(
     if len(set(crew_ids)) != len(crew_ids):
         raise PlanError("the same crew member cannot fill two seats")
 
-    total = sum(a["cost"] for a in resolved)
+    from crewops.options import load_costs
+
+    total = sum(a["cost"] for a in resolved) + len(cancel_flights) * load_costs(graph).cancellation_per_flight
     plan_id = next_id(graph, "plan", "PL")
     fp = _fingerprint(graph, disruption_id, resolved, cancel_flights, gate_moves, username, ctx.now_ts)
     run(

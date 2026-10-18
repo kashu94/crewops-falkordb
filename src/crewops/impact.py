@@ -193,6 +193,8 @@ class DutyDayEffect:
     legs_to_drop: tuple[str, ...]
     fdp_after_drop: float | None
     crew: tuple[dict[str, str], ...]
+    delay_hours: float = 0.0
+    """How much later the day now releases."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +253,7 @@ def _day_effect(day: dict[str, Any], delays: dict[str, int], book: RuleBook) -> 
         legs_to_drop=tuple(drop),
         fdp_after_drop=after,
         crew=tuple(c for c in day["crew"] if c.get("crew")),
+        delay_hours=hours(day["release_ts"], release),
     )
 
 
