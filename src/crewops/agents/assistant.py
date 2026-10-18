@@ -29,6 +29,7 @@ work them out yourself, and quote crew ids, costs (INR) and flight ids exactly a
 crew member, get_disruption for a disruption), then find_cover.
 - When a tool returns an error, say what is missing or not allowed rather than guessing.
 - Write plain text with no Markdown (no asterisks, headings or tables).
+- Refer to crew members by name and id, never as he or she.
 - Keep answers short enough to read aloud: lead with the recommendation, then the cost, then one line \
 on why the next options lost. Say which rules ruled people out when it matters.
 - You can only read and report through these tools; approvals need a human approver and you cannot \
@@ -120,6 +121,10 @@ class Assistant:
         focus = {k: v for k, v in self.focus().items() if v}
         if focus:
             lines.append("Last mentioned in this conversation: " + ", ".join(f"{k} {v}" for k, v in focus.items()))
+            if focus.get("crew"):
+                lines.append(f"If the user says he, she, they, them or that crew member, they mean {focus['crew']}.")
+            if focus.get("pairing"):
+                lines.append(f"If the user says it, the trip or that pairing, they mean {focus['pairing']}.")
         facts = self.memory.facts()
         if facts:
             lines.append("Stored preferences: " + ", ".join(f"{k}={v}" for k, v in facts.items()))
@@ -201,7 +206,13 @@ class Assistant:
                 raise RuntimeError("model declined")
             if response.stop_reason != "tool_use":
                 text = "".join(b.text for b in response.content if b.type == "text").strip()
-                return Answer(text or "I could not find an answer in the graph.", _intent_of(calls), self.model, calls)
+                return Answer(
+                    text or "I could not find an answer in the graph.",
+                    _intent_of(calls),
+                    self.model,
+                    calls,
+                    focus=_focus_of(calls),
+                )
             messages.append({"role": "assistant", "content": response.content})
             results = []
             for block in response.content:
@@ -280,7 +291,13 @@ class Assistant:
             tool_calls = message.get("tool_calls") or []
             if not tool_calls:
                 text = re.sub(r"<think>.*?</think>", "", message.get("content") or "", flags=re.S).strip()
-                return Answer(text or "I could not find an answer in the graph.", _intent_of(calls), models[0], calls)
+                return Answer(
+                    text or "I could not find an answer in the graph.",
+                    _intent_of(calls),
+                    models[0],
+                    calls,
+                    focus=_focus_of(calls),
+                )
             messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": tool_calls})
             for call in tool_calls:
                 try:
@@ -553,6 +570,25 @@ def _iso(seconds: int) -> str:
     from crewops.timeutil import iso
 
     return iso(seconds)
+
+
+def _focus_of(calls: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """What a model answer was about, from its tool calls: the recommended cover of the last
+    find_cover, or the crew member and trip it checked, so follow-ups resolve to them."""
+    for c in reversed(calls):
+        if not c["ok"]:
+            continue
+        r, args = c["result"], c["input"]
+        if c["tool"] == "find_cover" and r.get("recommended"):
+            return [{"kind": "pairing", "ref": r["pairing_id"]}, {"kind": "crew", "ref": r["recommended"]["crew_id"]}]
+        if c["tool"] == "check_legality":
+            return [
+                {"kind": "pairing", "ref": args["pairing_id"].upper()},
+                {"kind": "crew", "ref": args["crew_id"].upper()},
+            ]
+        if c["tool"] in ("crew_schedule", "crew_profile") and r.get("crew_id"):
+            return [{"kind": "crew", "ref": r["crew_id"]}]
+    return []
 
 
 def _intent_of(calls: list[dict[str, Any]]) -> str:

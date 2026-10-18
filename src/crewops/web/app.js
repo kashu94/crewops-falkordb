@@ -325,7 +325,7 @@ const PAGES = {
           <div class="suggest">${suggestionsFor(me.role).map((q) => `<button type="button">${esc(q)}</button>`).join("")}</div>
           <form id="ask" class="ask"><input id="q" autocomplete="off" placeholder="Ask CrewOps..."><button class="btn" type="submit">Ask</button></form>
         </div>
-        <div class="card"><div class="card-head"><h3>Your memory</h3></div><div class="card-body small" style="display:grid;gap:8px">
+        <div class="card"><div class="card-head"><h3>Your memory</h3></div><div class="card-body small" id="memory-card" style="display:grid;gap:8px">
           <p>Stored in its own graph: <code>${esc(memory.graph)}</code></p>
           <p>${memory.stats.sessions} sessions, ${memory.stats.turns} questions, ${memory.stats.entities} ids remembered</p>
           <p>Preferences: ${Object.entries(memory.facts).map(([k, v]) => `<span class="chip">${esc(k)} = ${esc(v)}</span>`).join(" ") || "none yet"}</p>
@@ -842,6 +842,18 @@ function suggestionsFor(role) {
   }[role] || common;
 }
 
+async function refreshMemory() {
+  const box = $("#memory-card");
+  if (!box) return;
+  const m = await api("/api/memory").catch(() => null);
+  if (!m) return;
+  box.innerHTML = `<p>Stored in its own graph: <code>${esc(m.graph)}</code></p>
+    <p>${m.stats.sessions} sessions, ${m.stats.turns} questions, ${m.stats.entities} ids remembered</p>
+    <p>Preferences: ${Object.entries(m.facts).map(([k, v]) => `<span class="chip">${esc(k)} = ${esc(v)}</span>`).join(" ") || "none yet"}</p>
+    <p>Shared playbook: ${m.playbook.map((p) => `${esc(p.role)}: ${esc(p.strategy.replaceAll("_", " "))} (${p.times})`).join(", ") || "nothing learned yet"}</p>
+    <p class="muted">${m.all_memory_graphs.length} separate memory graphs in this FalkorDB.</p>`;
+}
+
 async function ask(question) {
   if (!question.trim()) return;
   const chat = $("#chat");
@@ -862,6 +874,7 @@ async function ask(question) {
     html = `<div class="bubble a error">${esc(e.message)}</div>`;
   }
   chatLog.push(html);
+  refreshMemory();
   const pending = $("#pending");
   if (pending) pending.outerHTML = html;
   chat.scrollTop = chat.scrollHeight;
